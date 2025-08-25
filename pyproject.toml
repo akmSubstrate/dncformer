@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dncformer"
+version = "0.1.0"
+description = "DNC-augmented Transformer layer/block package"
+authors = [{name="Andrew Mathau"}]
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "transformers",
+    "tensorboard",
+    "datasets",
+    "pyyaml",
+    "numpy",
+    "tqdm",
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+packages = [
+    "dncformer",
+    "dncformer.utils",
+    "dncformer.log",
+    "dncformer.data",
+    "dncformer.model",
+    "dncformer.train",
+    "dncformer.experiments",
+    "cli"
+]
