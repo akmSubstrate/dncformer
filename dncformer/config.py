@@ -1,8 +1,9 @@
 # dncformer/config.py
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Sequence
 import yaml
+
 
 @dataclass
 class DNCFormerConfig:
@@ -85,12 +86,21 @@ class DNCFormerConfig:
     lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.05
-    lora_target_modules: Optional[List[str]] = None  # e.g., ["q_proj","k_proj","v_proj","o_proj","dense_h_to_4h","dense_4h_to_h"]
+    lora_target_modules: Tuple[str, ...] = (
+        "q_proj", "k_proj", "v_proj", "o_proj", "fc1", "fc2", "wq", "wk", "wv", "wo", "gate_proj", "up_proj",
+        "down_proj"
+    )
     lora_last_n_layers: int = 2  # restrict to last N base model transformer blocks
 
     # Multi-block configuration
     block_roles: Optional[List[str]] = None
 
+    # Gate anti-collapse functionality (default inactive)
+    router_noise_std: float = 0.0  # A2: σ for Gaussian noise on memory logits (training only)
+    router_balance_lambda: float = 0.0  # A1: weight for per-block soft balance across memory experts
+    expert_dropout_p: float = 0.0  # tiny per-token expert-dropout within a block (memory experts only)
+    block_memdrop_prob: float = 0.0  # B2: chance to drop a block’s memory path (training only, head-level)
+    cross_block_balance_lambda: float = 0.0  # B1: weight for cross-block memory-usage balance
 
 
 def load_config_yaml(path: str) -> DNCFormerConfig:

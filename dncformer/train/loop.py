@@ -1,6 +1,6 @@
 # dncformer/train/loop.py
 from __future__ import annotations
-import json, contextlib
+import math, torch, json, contextlib
 from typing import Optional, Tuple
 import torch, torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -34,32 +34,27 @@ def build_model_and_tokenizer():
     tok, base = load_base_model(CFG.base_model_id)
     if CFG.d_model is None:
         CFG.d_model = base.config.hidden_size
-    head = DNCFormerHead(base, CFG).to(next(base.parameters()).device)
-    if CFG.use_torch_compile and hasattr(torch, "compile"):
-        head = torch.compile(head)
-    if getattr(CFG, "lora_enable", False):
+
+    # --- LoRA adapter (optional, safe if PEFT missing) ---
+    if bool(getattr(CFG, "lora_enable", False)):
         try:
-            from peft import LoraConfig, get_peft_model
-        except Exception as e:
-            print("[LoRA] peft not available; skipping:", e)
-        else:
-            # pick targets: if not provided, try common names found in Phi/LLM stacks
-            targets = CFG.lora_target_modules or ["q_proj", "k_proj", "v_proj", "o_proj", "dense_h_to_4h",
-                                                  "dense_4h_to_h"]
-            lconf = LoraConfig(
-                r=CFG.lora_r, lora_alpha=CFG.lora_alpha, lora_dropout=CFG.lora_dropout,
-                target_modules=targets, bias="none", task_type="CAUSAL_LM"
+            from peft import LoraConfig, get_peft_model, TaskType
+            lcfg = LoraConfig(
+                r=int(getattr(CFG, "lora_r", 8)),
+                lora_alpha=int(getattr(CFG, "lora_alpha", 16)),
+                lora_dropout=float(getattr(CFG, "lora_dropout", 0.05)),
+                bias="none",
+                task_type=TaskType.CAUSAL_LM,
+                target_modules=list(getattr(CFG, "lora_target_modules")),
             )
+            base = get_peft_model(base, lcfg)
+            print("[LoRA] enabled with target modules:", list(getattr(CFG, "lora_target_modules")))
+        except Exception as e:
+            print("[LoRA] skipped (PEFT unavailable or model not supported):", e)
 
-            # restrict to last N layers: select modules by name
-            def _in_last_n(name: str, n: int) -> bool:
-                # keep simple: match ".layers." index near the end if your base exposes it
-                # otherwise, return True and rely on target_modules only.
-                return True
-
-            base = get_peft_model(base, lconf)
-            base.print_trainable_parameters()
-
+    head = DNCFormerHead(base, CFG).to(CFG.device)
+    if CFG.use_torch_compile and hasattr(torch, 'compile'):
+        head = torch.compile(head)
     return tok, head
 
 def lm_shift_labels(input_ids, logits, tok):
@@ -122,7 +117,6 @@ def train_experiment(
     optim = make_optimizer(head, lr=CFG.lr, weight_decay=CFG.weight_decay)
     mixer = build_mixer(tok, mixture_weights, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
 
-    #scheduler = make_stepped_scheduler(optim, warmup_steps, steps, min_lr_ratio=min_lr_ratio)
     scheduler = make_continuous_scheduler(
         optim,
         warmup_steps=warmup_steps,

@@ -9,7 +9,7 @@ description = "DNC-augmented Transformer layer/block package"
 authors = [{name="Andrew Mathau"}]
 requires-python = ">=3.10"
 dependencies = [
-    "torch",
+    "pytorch",
     "transformers",
     "tensorboard",
     "datasets",
@@ -17,6 +17,7 @@ dependencies = [
     "pyyaml",
     "numpy",
     "tqdm",
+    "pytest",
 ]
 
 [tool.setuptools]
