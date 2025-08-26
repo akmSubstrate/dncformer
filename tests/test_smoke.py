@@ -23,18 +23,18 @@ def test_parallel_block_basic():
         print("Test: FAILED")
 
 def test_head_forward_tiny():
-    # uses real base model; skip on CI if env lacks GPU/weights
     print("Testing head forward functionality...")
-    tok, head = None, None
     try:
         tok, head = build_model_and_tokenizer()
-        x = tok("hello world", return_tensors="pt").input_ids[:,:8]
-        logits, gates = head(x)
+        dev = next(head.parameters()).device
+        toks = tok("hello world", return_tensors="pt")
+        x = toks.input_ids[:, :8].to(dev)          # ensure same device as model
+        logits, gates = head(x, collect_metrics=False)
         assert logits.shape[0]==x.shape[0] and len(gates)==len(head.blocks)
         print("Test: PASSED")
-    except Exception:
-        print("Test: FAILED")
-        pass
+    except Exception as e:
+        print("Test: FAILED", e)
+
 
 
 def _snapshot_attr(obj, name):
@@ -66,14 +66,14 @@ def smoke_head_mem_experts_one_step_real():
         pad_id = getattr(tok, "pad_token_id", None) or getattr(tok, "eos_token_id", 0) or 0
         x = torch.full((B, T), int(pad_id), dtype=torch.long, device=device)
 
-        logits, gates = head(x)
+        logits, gates = head(x, collect_metrics=False)
         assert logits.shape[:2] == (B, T), f"bad logits shape: {tuple(logits.shape)}"
         assert isinstance(gates, (list, tuple)) and len(gates) == len(head.blocks), "gates list mismatch"
         for g in gates:
             assert g.shape[:2] == (B, T)
             assert (g >= 0).all() and (g <= 1).all(), "gate out of [0,1] range"
 
-        print("  ok.")
+        print("Test: PASSED")
     finally:
         _restore_attr(CFG, "mem_experts", old_val, existed)
         # free VRAM / allocator
@@ -97,14 +97,14 @@ def smoke_head_mem_experts_two_step_real():
         pad_id = getattr(tok, "pad_token_id", None) or getattr(tok, "eos_token_id", 0) or 0
         x = torch.full((B, T), int(pad_id), dtype=torch.long, device=device)
 
-        logits, gates, aux = head.forward_with_metrics(x, gate_override=None)
+        logits, gates, aux = head.forward(x, gate_override=None, collect_metrics=True)
         assert logits.shape[:2] == (B, T), f"bad logits shape: {tuple(logits.shape)}"
         assert isinstance(gates, (list, tuple)) and len(gates) == len(head.blocks)
         assert isinstance(aux, dict) and "per_block" in aux and "blocks" in aux
         for m in aux["blocks"]:
             assert isinstance(m, dict), "per-block metrics missing"
 
-        print("  ok.")
+        print("Test: PASSED")
     finally:
         _restore_attr(CFG, "mem_experts", old_val, existed)
         free_head_and_cache()

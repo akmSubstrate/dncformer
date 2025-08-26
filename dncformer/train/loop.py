@@ -168,7 +168,7 @@ def train_experiment(
         _apply_schedules(step)
         in_ids = mixer(batch_size).to(next(head.parameters()).device)
         with torch.autocast('cuda', dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):
-            logits, gates, aux = head.forward_with_metrics(in_ids, gate_override=getattr(CFG, "force_g", None))
+            logits, gates, aux = head.forward(in_ids, gate_override=getattr(CFG, "force_g", None))
             loss = lm_shift_labels(in_ids, logits, tok)
 
             div_lam = float(getattr(CFG, "expert_diversity_lambda", 0.0))

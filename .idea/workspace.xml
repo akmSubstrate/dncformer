@@ -6,12 +6,9 @@
   <component name="ChangeListManager">
     <list default="true" id="782c5555-6d41-4b3c-b9b9-c888c42c0ef5" name="Changes" comment="initial prototype dncformer">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dncformer/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/config.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/dncformer/model/blocks.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/model/blocks.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/dncformer/model/head.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/model/head.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dncformer/model/memory.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/model/memory.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/dncformer/train/loop.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/train/loop.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dncformer/train/scheduler.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/train/scheduler.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/tests/test_smoke.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_smoke.py" afterDir="false" />
     </list>
@@ -99,7 +96,7 @@
       <workItem from="1754955961687" duration="1756000" />
       <workItem from="1754958761738" duration="20574000" />
       <workItem from="1755191380110" duration="80647000" />
-      <workItem from="1755937190749" duration="35834000" />
+      <workItem from="1755937190749" duration="40218000" />
     </task>
     <task id="LOCAL-00001" summary="initial prototype dncformer">
       <option name="closed" value="true" />

@@ -59,8 +59,13 @@ class ParallelEnrichmentBlock(nn.Module):
                                heads=heads, dropout=dropout, ffn_mult=ffn_mult, free_bias=fbias)
             ])
         else:
-            Ns = getattr(CFG, "expert_N", [N_]*K)
-            Wexp = getattr(CFG, "expert_W", W_)
+            Ns = getattr(CFG, "expert_N", None)
+            if not isinstance(Ns, (list, tuple)) or len(Ns) != K:
+                Ns = [N_] * K
+
+            Wexp = getattr(CFG, "expert_W", None)
+            if not isinstance(Wexp, int) or Wexp <= 0:
+                Wexp = W_
             self.dncblocks = nn.ModuleList([
                 DNCformerBlock(d_in=d_in, d_model=d_model, R=R_, W=Wexp, N=Ns[i], # raises error
                                heads=heads, dropout=dropout, ffn_mult=ffn_mult, free_bias=fbias)
