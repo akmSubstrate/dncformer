@@ -133,7 +133,7 @@ class DNCMemory(nn.Module):
         rw = read_mode[:,:,0:1]*bwd + read_mode[:,:,1:2]*cr + read_mode[:,:,2:3]*fwd
         r = torch.einsum("brn,bnw->brw", rw, M)
 
-        state = {"M": M, "u": u, "L": L, "p": p, "rw": rw, "r": r}
+        state = {"M": M, "u": u, "L": L, "p": p, "rw": rw, "r": r, "ww": ww}
 
         try:
             wg = x_if.get("write_gate", None)
@@ -168,6 +168,7 @@ class DNCformerBlock(nn.Module):
         self.out_proj = nn.Linear(d_model + R*W, d_model)
         self.last_metrics = {}
         self.last_read_feat = None
+        self.io_role = "read_write"
 
     def forward(self, x: torch.Tensor, state: Optional[dict]=None):
         B, T, D = x.shape
@@ -179,17 +180,43 @@ class DNCformerBlock(nn.Module):
 
         r_list, new_state = [], state
         iface = self.if_head(h)
+
         for t in range(T):
             x_if = {k: v[:,t] for k, v in iface.items()}
+
+            # read_only block logic
+            role = getattr(self, "io_role", "read_write")
+            if role == "read_only":
+                # hard-disable writes
+                if "write_gate" in x_if:
+                    x_if["write_gate"] = torch.zeros_like(x_if["write_gate"])
+                if "alloc_gate" in x_if:
+                    x_if["alloc_gate"] = torch.zeros_like(x_if["alloc_gate"])
+
             r_t, new_state = self.mem(x_if, new_state)
             r_list.append(r_t)
+
         Rseq = torch.stack(r_list, dim=1)  # (B,T,R,W)
-        reads_flat = Rseq.reshape(B,T,self.R*self.W)
-        y = self.out_proj(torch.cat([h, reads_flat], dim=-1))
+        reads_flat = Rseq.reshape(B,T,self.R*self.W) # (B,T,RW)
+
+        # write_only block logic
+        role = getattr(self, "io_role", "generic")
+        if role == "write_only":
+            # ignore reads in fused block output
+            reads_flat = torch.zeros_like(reads_flat)
+
+        fused = torch.cat([h, reads_flat], dim=-1)
+        y = self.out_proj(fused)
 
         try:
-            self.last_read_feat = Rseq.mean(dim=2).detach()
-            rnorm = float(self.last_read_feat.norm().item() / max(1, self.last_read_feat.numel()))
+            self.last_read_feat = (
+                Rseq.mean(dim=2).detach() if role != "write_only"
+                else torch.zeroes(B, T, self.W, device=x.device, dtype=Rseq.dtype)
+            )
+            rnorm = (
+                float(self.last_read_feat.norm().item() / max(1, self.last_read_feat.numel())) if role != "write_only"
+                else 0.0
+            )
         except Exception:
             self.last_read_feat = None; rnorm = float("nan")
 

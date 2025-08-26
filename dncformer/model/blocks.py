@@ -62,7 +62,7 @@ class ParallelEnrichmentBlock(nn.Module):
             Ns = getattr(CFG, "expert_N", [N_]*K)
             Wexp = getattr(CFG, "expert_W", W_)
             self.dncblocks = nn.ModuleList([
-                DNCformerBlock(d_in=d_in, d_model=d_model, R=R_, W=Wexp, N=Ns[i],
+                DNCformerBlock(d_in=d_in, d_model=d_model, R=R_, W=Wexp, N=Ns[i], # raises error
                                heads=heads, dropout=dropout, ffn_mult=ffn_mult, free_bias=fbias)
                 for i in range(K)
             ])

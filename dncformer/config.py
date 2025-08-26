@@ -21,6 +21,7 @@ class DNCFormerConfig:
     dnc_cell_size: int = 64
     dnc_nr_cells: int = 256
     gate_bias_init: float = -1.0
+    gate_fp32: bool = True # toggle to compute router LN/Linear in float 32 for stability
 
     # Train
     lr: float = 2e-4
@@ -35,6 +36,16 @@ class DNCFormerConfig:
     log_every: int = 10
     batch_size: int = 8
     seed: int = 42
+    lr_min_ratio: float = 0.10
+    lr_cawr_T0: int = 200
+    lr_cawr_Tmult: int = 2
+
+    scheduler_type: str = "cosine"  # ["cosine","one_cycle","plateau"]
+    min_lr_ratio: float = 0.1  # for cosine/one-cycle
+    plateau_factor: float = 0.5
+    plateau_patience: int = 200  # steps of no improvement
+    early_stop_patience: int = 800  # steps
+    grad_accum_steps: int = 1  # >1 enables accumulation
 
     # Schedules / gating (E series)
     gate_temp: float = 1.0
@@ -67,6 +78,20 @@ class DNCFormerConfig:
     key_overlap_lambda: float = 0.0
     key_overlap_window: int = 1
     reg_only_on_memory_batches: bool = True
+
+
+    # LoRA settings
+    lora_enable: bool = False
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    lora_target_modules: Optional[List[str]] = None  # e.g., ["q_proj","k_proj","v_proj","o_proj","dense_h_to_4h","dense_4h_to_h"]
+    lora_last_n_layers: int = 2  # restrict to last N base model transformer blocks
+
+    # Multi-block configuration
+    block_roles: Optional[List[str]] = None
+
+
 
 def load_config_yaml(path: str) -> DNCFormerConfig:
     with open(path, "r", encoding="utf-8") as f:

@@ -25,22 +25,8 @@ class DNCFormerHead(nn.Module):
         ])
         self.proj_out = nn.Identity()
 
-    def forward(self, input_ids: torch.Tensor, attention_mask: Optional[torch.Tensor]=None):
-        with torch.no_grad():
-            with sdpa_ctx():
-                out = self.base(input_ids=input_ids, attention_mask=attention_mask,
-                                output_hidden_states=True, use_cache=False)
-        h = out.hidden_states[-1]
-        dnc_states = [None] * len(self.blocks)
-        gates = []
-        for i, blk in enumerate(self.blocks):
-            st_in = dnc_states[i]
-            K = int(getattr(blk, "mem_experts", 1))
-            if K > 1 and not isinstance(st_in, (list, tuple)):
-                st_in = [st_in] * K
-            h, dnc_states[i], g = blk(h, dnc_state=st_in)
-            gates.append(g.detach())
-        logits = self.base.lm_head(self.proj_out(h).to(self.base.lm_head.weight.dtype))
+    def forward(self, input_ids, attention_mask=None):
+        logits, gates, _ = self.forward_with_metrics(input_ids, attention_mask=attention_mask, gate_override=None)
         return logits, gates
 
     def forward_with_metrics(self, input_ids: torch.Tensor, attention_mask: Optional[torch.Tensor] = None,

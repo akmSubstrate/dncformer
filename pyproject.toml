@@ -13,6 +13,7 @@ dependencies = [
     "transformers",
     "tensorboard",
     "datasets",
+    "peft",
     "pyyaml",
     "numpy",
     "tqdm",

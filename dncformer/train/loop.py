@@ -1,6 +1,6 @@
 # dncformer/train/loop.py
 from __future__ import annotations
-import math, time, json, contextlib
+import json, contextlib
 from typing import Optional, Tuple
 import torch, torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -14,7 +14,8 @@ from ..data.mix import build_mixer
 from ..data.synthetic import make_haystack_batch
 from ..model.head import DNCFormerHead
 from .optim import make_optimizer
-from .scheduler import make_warmup_cosine_scheduler
+from .scheduler import make_stepped_scheduler, make_continuous_scheduler
+from dncformer.model.roles import set_block_roles
 
 def load_base_model(model_id: str):
     tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
@@ -36,6 +37,29 @@ def build_model_and_tokenizer():
     head = DNCFormerHead(base, CFG).to(next(base.parameters()).device)
     if CFG.use_torch_compile and hasattr(torch, "compile"):
         head = torch.compile(head)
+    if getattr(CFG, "lora_enable", False):
+        try:
+            from peft import LoraConfig, get_peft_model
+        except Exception as e:
+            print("[LoRA] peft not available; skipping:", e)
+        else:
+            # pick targets: if not provided, try common names found in Phi/LLM stacks
+            targets = CFG.lora_target_modules or ["q_proj", "k_proj", "v_proj", "o_proj", "dense_h_to_4h",
+                                                  "dense_4h_to_h"]
+            lconf = LoraConfig(
+                r=CFG.lora_r, lora_alpha=CFG.lora_alpha, lora_dropout=CFG.lora_dropout,
+                target_modules=targets, bias="none", task_type="CAUSAL_LM"
+            )
+
+            # restrict to last N layers: select modules by name
+            def _in_last_n(name: str, n: int) -> bool:
+                # keep simple: match ".layers." index near the end if your base exposes it
+                # otherwise, return True and rely on target_modules only.
+                return True
+
+            base = get_peft_model(base, lconf)
+            base.print_trainable_parameters()
+
     return tok, head
 
 def lm_shift_labels(input_ids, logits, tok):
@@ -96,8 +120,17 @@ def train_experiment(
 
     tok, head = build_model_and_tokenizer()
     optim = make_optimizer(head, lr=CFG.lr, weight_decay=CFG.weight_decay)
-    scheduler = make_warmup_cosine_scheduler(optim, warmup_steps, steps, min_lr_ratio=min_lr_ratio)
     mixer = build_mixer(tok, mixture_weights, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+
+    #scheduler = make_stepped_scheduler(optim, warmup_steps, steps, min_lr_ratio=min_lr_ratio)
+    scheduler = make_continuous_scheduler(
+        optim,
+        warmup_steps=warmup_steps,
+        base_lr=getattr(CFG, "lr", 2e-4),
+        min_lr_ratio=float(getattr(CFG, "lr_min_ratio", min_lr_ratio)),
+        cawr_T0=int(getattr(CFG, "lr_cawr_T0", 200)),
+        cawr_Tmult=int(getattr(CFG, "lr_cawr_Tmult", 2)),
+    )
 
     def _apply_schedules(step: int):
         if mixture_schedule:
