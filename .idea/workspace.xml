@@ -6,6 +6,7 @@
   <component name="ChangeListManager">
     <list default="true" id="782c5555-6d41-4b3c-b9b9-c888c42c0ef5" name="Changes" comment="initial prototype dncformer">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_smoke.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_smoke.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -46,7 +47,7 @@
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "WebServerToolWindowFactoryState": "false",
-    "git-widget-placeholder": "slim",
+    "git-widget-placeholder": "dev__lib",
     "last_opened_file_path": "C:/Users/andre/Documents/_projects/_memformer",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
@@ -91,7 +92,7 @@
       <workItem from="1754955961687" duration="1756000" />
       <workItem from="1754958761738" duration="20574000" />
       <workItem from="1755191380110" duration="80647000" />
-      <workItem from="1755937190749" duration="24788000" />
+      <workItem from="1755937190749" duration="25891000" />
     </task>
     <task id="LOCAL-00001" summary="initial prototype dncformer">
       <option name="closed" value="true" />
