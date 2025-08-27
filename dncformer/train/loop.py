@@ -110,13 +110,15 @@ def train_experiment(
 ):
     steps = int(steps or CFG.train_steps)
     batch_size = int(batch_size or CFG.batch_size)
-    warmup_steps = int(warmup_steps if warmup_steps is not None else max(10, steps//20))
+    warmup_steps = int(warmup_steps if warmup_steps is not None else max(10, steps // 20))
     log_every = int(log_every if log_every is not None else CFG.log_every)
 
+    # Build model & tokenizer on the configured device
     tok, head = build_model_and_tokenizer()
-    optim = make_optimizer(head, lr=CFG.lr, weight_decay=CFG.weight_decay)
+    optim = make_optimizer(head)
     mixer = build_mixer(tok, mixture_weights, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
 
+    # dynamic LR scheduler
     scheduler = make_continuous_scheduler(
         optim,
         warmup_steps=warmup_steps,
@@ -130,7 +132,9 @@ def train_experiment(
         if mixture_schedule:
             for until, ws in mixture_schedule:
                 if until is None or step <= int(until):
-                    with contextlib.suppress(Exception): mixer.set_weights(ws); break
+                    with contextlib.suppress(Exception):
+                        mixer.set_weights(ws)
+                    break
         if gate_temp_schedule:
             for until, temp in gate_temp_schedule:
                 if until is None or step <= int(until):
@@ -140,9 +144,10 @@ def train_experiment(
                 if until is None or step <= int(until):
                     CFG.gate_reg_lambda = float(lam); break
 
+    # TB config echo
     if TB_AVAILABLE:
         try:
-            tb  # may NameError
+            tb  # NameError if not created yet
         except NameError:
             start_tb_run()
         if tb and tb.writer:
@@ -156,21 +161,29 @@ def train_experiment(
 
     head.train()
     amp_dtype = choose_amp_dtype(CFG.precision)
-    scaler = torch.amp.GradScaler('cuda', enabled=(amp_dtype in (torch.float16, torch.bfloat16)))
+    scaler = torch.amp.GradScaler(
+        'cuda',
+        enabled=(amp_dtype in (torch.float16, torch.bfloat16))
+    )
 
     for step in range(1, steps + 1):
         _apply_schedules(step)
+
         in_ids = mixer(batch_size).to(next(head.parameters()).device)
         with torch.autocast('cuda', dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):
+            # Unified forward returns (logits, gates, aux)
             logits, gates, aux = head.forward(in_ids, gate_override=getattr(CFG, "force_g", None))
             loss = lm_shift_labels(in_ids, logits, tok)
 
+            # (Optional) expert diversity: encourage spread across (vanilla + K experts)
             div_lam = float(getattr(CFG, "expert_diversity_lambda", 0.0))
             if div_lam > 0.0 and isinstance(aux, dict) and "per_block" in aux:
                 ent_vals = [float(m.get("experts_pi_entropy", float("nan"))) for m in aux["per_block"]]
                 ent_vals = [x for x in ent_vals if not (x != x)]
-                if ent_vals: loss = loss - div_lam * (sum(ent_vals)/len(ent_vals))
+                if ent_vals:
+                    loss = loss - div_lam * (sum(ent_vals) / len(ent_vals))
 
+            # (Optional) mild gate regularizer
             lam = float(getattr(CFG, "gate_reg_lambda", 0.0))
             if lam > 0 and isinstance(gates, (list, tuple)) and len(gates) > 0:
                 reg = 0.0
@@ -179,6 +192,7 @@ def train_experiment(
                     reg = reg + (g2.mean() * 0.0 + (g2 * (1 - g2)).mean())
                 loss = loss + lam * reg
 
+            # (Optional) write sparsity (applied primarily on memory tasks)
             lam_w = float(getattr(CFG, "write_reg_lambda", 0.0))
             if lam_w > 0.0 and isinstance(aux, dict) and "blocks" in aux:
                 apply_reg = True
@@ -187,9 +201,11 @@ def train_experiment(
                     apply_reg = any(tk in bn for tk in ("copy","repeat","nback"))
                 if apply_reg:
                     w_means = [m.get("write_gate_mean") for m in aux["blocks"] if isinstance(m, dict)]
-                    w_means = [float(x) for x in w_means if isinstance(x, (float,int))]
-                    if w_means: loss = loss + lam_w * (sum(w_means)/len(w_means))
+                    w_means = [float(x) for x in w_means if isinstance(x, (float, int))]
+                    if w_means:
+                        loss = loss + lam_w * (sum(w_means) / len(w_means))
 
+        # Optim step
         if amp_dtype in (torch.float16, torch.bfloat16):
             scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(head.parameters(), CFG.grad_clip)
@@ -201,15 +217,18 @@ def train_experiment(
 
         scheduler.step()
 
-        if step % log_every == 0 and tb and tb.writer:
+        # Logging (TensorBoard)
+        if (step % log_every == 0) and tb and tb.writer:
             tb.writer.add_scalar("train/loss", float(loss.item()), step)
             tb.writer.add_scalar("train/lr", float(scheduler.get_last_lr()[0]), step)
+
             if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
                     m, f, e = gate_metrics(g)
                     tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
                     tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
                     tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
+
                 mix_name = getattr(mixer, "last_name", None) or "unknown"
                 tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
                 for bi, g in enumerate(gates):
@@ -220,10 +239,10 @@ def train_experiment(
                 if len(gates) > 0:
                     g0 = reduce_gate_tensor(gates[0].detach()); T = g0.size(1)
                     q = max(1, T // 4)
-                    for qi, (s, e) in enumerate([(0,q),(q,2*q),(2*q,3*q),(3*q,T)], start=1):
+                    for qi, (s, e) in enumerate([(0, q), (q, 2*q), (2*q, 3*q), (3*q, T)], start=1):
                         tb.writer.add_scalar(f"gates/block0_q{qi}_mean/{mix_name}", float(g0[:, s:e].mean().item()), step)
 
-                # Expert diagnostics
+                # Expert diagnostics (if present)
                 for bi, b in enumerate(aux.get("blocks", [])):
                     if isinstance(b, dict) and "experts_pi_mean" in b:
                         for j, v in enumerate(b["experts_pi_mean"]):
@@ -237,9 +256,12 @@ def train_experiment(
 
             tb.flush()
 
+        # Console echo for training vis
         if step % log_every == 0:
             gmeans = [float(reduce_gate_tensor(g).mean().item()) for g in gates] if isinstance(gates, (list, tuple)) else []
-            print(f"step {step} | loss {loss.item():.4f} | lr {scheduler.get_last_lr()[0]:.2e} | gates={gmeans} | mix={getattr(mixer,'last_name','?')}")
+            print(f"step {step} | loss {loss.item():.4f} | lr {scheduler.get_last_lr()[0]:.2e} | "
+                  f"gates={gmeans} | mix={getattr(mixer,'last_name','?')}")
 
     if tb and tb.writer: tb.flush()
+
     return head, tok
