@@ -1,4 +1,5 @@
 # dncformer/train/experiments.py
+from datetime import timedelta
 import time, json, torch, random, numpy as np
 from dncformer.config import CFG
 from dncformer.train.loop import train_experiment, start_tb_run
@@ -123,18 +124,24 @@ if __name__ == "__main__":  # change to "__main__" if you’ll run as a script
     # Memory‑first curriculum in both experiments; HF resumes after S≈steps/5
     mixture      = (0.0, 0.34, 0.33, 0.33)   # (hf, copy, repeat, nback)
     hf_dataset   = "tatsu-lab/alpaca"
-    hf_max_items = 8000                      # more variety without blowing RAM
-    steps        = 1000                      # raise if you want longer tails
-    seeds        = (1337, 2027, 4242)
+    hf_max_items = 8000
+    #steps        = 1000
+    steps        = 100
+    #seeds        = (1337, 2027, 4242)
+    seeds        = (1337,2027)
 
     for s in seeds:
+        start = time.time()
         run_e17(label="E17_parallel",
                 steps=steps, seed=s,
                 mixture=mixture,
                 hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+        print(f"[ Run time: {timedelta(seconds = time.time()-start)} ]")
+        start = time.time()
         # tiny spacer avoids TB dir collisions on fast filesystems
         time.sleep(1.0)
         run_e18(label="E18_sequential",
                 steps=steps, seed=s,
                 mixture=mixture,
                 hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+        print(f"[ run time: {timedelta(seconds = time.time()-start)} ]")

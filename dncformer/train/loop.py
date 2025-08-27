@@ -9,7 +9,9 @@ from ..config import CFG
 from ..utils.env import sdpa_ctx, choose_amp_dtype
 from ..utils.helpers import reduce_gate_tensor, gate_metrics, free_head_and_cache
 from ..utils.helpers import causal_mask  # if needed elsewhere
-from ..log.tb import TBLogger, TB_AVAILABLE, start_tb_run, tb
+#from ..log.tb import TBLogger, TB_AVAILABLE, start_tb_run, tb
+from ..log import tb as tblog
+start_tb_run = tblog.start_tb_run
 from ..data.mix import build_mixer
 from ..data.synthetic import make_haystack_batch
 from ..model.head import DNCFormerHead
@@ -85,9 +87,9 @@ def evaluate_haystack(head, steps: int = 50, batch: int = 16, T: int = 256, voca
             pred = logits_q.argmax(dim=-1)
             accs.append((pred == V).float().mean().item()); losses.append(loss.item())
     acc_m, loss_m = float(sum(accs)/len(accs)), float(sum(losses)/len(losses))
-    if TB_AVAILABLE and ('tb' in globals()) and tb and tb.writer:
-        tb.writer.add_scalar("eval/haystack_acc", acc_m, tb_step or 0)
-        tb.writer.add_scalar("eval/haystack_loss", loss_m, tb_step or 0); tb.flush()
+    if tblog.TB_AVAILABLE and ('tb' in globals()) and tblog.tb and tblog.tb.writer:
+        tblog.tb.writer.add_scalar("eval/haystack_acc", acc_m, tb_step or 0)
+        tblog.tb.writer.add_scalar("eval/haystack_loss", loss_m, tb_step or 0); tblog.tb.flush()
     head.train()
     print(f"[Haystack] acc={acc_m:.3f} | loss={loss_m:.3f} | fast={fast}")
     return acc_m, loss_m
@@ -145,13 +147,13 @@ def train_experiment(
                     CFG.gate_reg_lambda = float(lam); break
 
     # TB config echo
-    if TB_AVAILABLE:
+    if tblog.TB_AVAILABLE:
         try:
-            tb  # NameError if not created yet
+            tblog.tb  # NameError if not created yet
         except NameError:
             start_tb_run()
-        if tb and tb.writer:
-            tb.add_text("run/config", json.dumps({
+        if tblog.tb and tblog.tb.writer:
+            tblog.tb.add_text("run/config", json.dumps({
                 "steps": steps, "batch_size": batch_size, "warmup_steps": warmup_steps,
                 "mixture_weights": list(mixture_weights),
                 "mixture_schedule": mixture_schedule,
@@ -256,43 +258,43 @@ def train_experiment(
         scheduler.step()
 
         # Logging (TensorBoard)
-        if (step % log_every == 0) and tb and tb.writer:
-            tb.writer.add_scalar("train/loss", float(loss.item()), step)
-            tb.writer.add_scalar("train/lr", float(scheduler.get_last_lr()[0]), step)
+        if (step % log_every == 0) and tblog.tb and tblog.tb.writer:
+            tblog.tb.writer.add_scalar("train/loss", float(loss.item()), step)
+            tblog.tb.writer.add_scalar("train/lr", float(scheduler.get_last_lr()[0]), step)
 
             if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
                     m, f, e = gate_metrics(g)
-                    tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
-                    tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
-                    tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
 
                 mix_name = getattr(mixer, "last_name", None) or "unknown"
-                tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
+                tblog.tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
                 for bi, g in enumerate(gates):
                     m, f, _ = gate_metrics(g)
-                    tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
-                    tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
+                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
+                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
 
                 if len(gates) > 0:
                     g0 = reduce_gate_tensor(gates[0].detach()); T = g0.size(1)
                     q = max(1, T // 4)
                     for qi, (s, e) in enumerate([(0, q), (q, 2*q), (2*q, 3*q), (3*q, T)], start=1):
-                        tb.writer.add_scalar(f"gates/block0_q{qi}_mean/{mix_name}", float(g0[:, s:e].mean().item()), step)
+                        tblog.tb.writer.add_scalar(f"gates/block0_q{qi}_mean/{mix_name}", float(g0[:, s:e].mean().item()), step)
 
                 # Expert diagnostics (if present)
                 for bi, b in enumerate(aux.get("blocks", [])):
                     if isinstance(b, dict) and "experts_pi_mean" in b:
                         for j, v in enumerate(b["experts_pi_mean"]):
-                            tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
+                            tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
                     if isinstance(b, dict) and "experts_pi_entropy" in b:
-                        tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(b["experts_pi_entropy"]), step)
+                        tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(b["experts_pi_entropy"]), step)
                     if isinstance(b, dict) and "fusion_delta_norm" in b:
-                        tb.writer.add_scalar(f"fusion/block_{bi}/delta_norm", float(b["fusion_delta_norm"]), step)
+                        tblog.tb.writer.add_scalar(f"fusion/block_{bi}/delta_norm", float(b["fusion_delta_norm"]), step)
                     if isinstance(b, dict) and "write_gate_mean" in b:
-                        tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(b["write_gate_mean"]), step)
+                        tblog.tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(b["write_gate_mean"]), step)
 
-            tb.flush()
+            tblog.tb.flush()
 
         # Console echo for training vis
         if step % log_every == 0:
@@ -300,6 +302,6 @@ def train_experiment(
             print(f"step {step} | loss {loss.item():.4f} | lr {scheduler.get_last_lr()[0]:.2e} | "
                   f"gates={gmeans} | mix={getattr(mixer,'last_name','?')}")
 
-    if tb and tb.writer: tb.flush()
+    if tblog.tb and tblog.tb.writer: tblog.tb.flush()
 
     return head, tok
