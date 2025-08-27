@@ -6,10 +6,9 @@
   <component name="ChangeListManager">
     <list default="true" id="782c5555-6d41-4b3c-b9b9-c888c42c0ef5" name="Changes" comment="initial prototype dncformer">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dncformer/model/blocks.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/model/blocks.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dncformer/data/mix.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/data/mix.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dncformer/experiments/experiments.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/experiments/experiments.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/dncformer/train/loop.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/train/loop.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dncformer/train/optim.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/train/optim.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/pyproject.toml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -80,8 +79,30 @@
       <recent name="C:\Users\andre\Documents\_projects\_memformer\tests" />
     </key>
   </component>
-  <component name="RunManager" selected="Python tests.Python tests for test_router_balance_and_dropout.test_router_noise_and_expert_dropout_smoke">
-    <configuration name="Python tests for test_loop_entry.test_train_experiment_ministeps" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
+  <component name="RunManager" selected="Python tests.Python tests for test_experiments_e17_e18.test_e18_preflight">
+    <configuration name="experiments" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+      <module name="_memformer" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/dncformer/experiments" />
+      <option name="IS_MODULE_SDK" value="true" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/dncformer/experiments/experiments.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <configuration name="Python tests for test_experiments_e17_e18.test_e17_preflight" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
@@ -92,11 +113,11 @@
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
       <option name="_new_additionalArguments" value="&quot;&quot;" />
-      <option name="_new_target" value="&quot;test_loop_entry.test_train_experiment_ministeps&quot;" />
+      <option name="_new_target" value="&quot;test_experiments_e17_e18.test_e17_preflight&quot;" />
       <option name="_new_targetType" value="&quot;PYTHON&quot;" />
       <method v="2" />
     </configuration>
-    <configuration name="Python tests for test_optim_defaults.test_make_optimizer_defaults" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
+    <configuration name="Python tests for test_experiments_e17_e18.test_e18_preflight" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
@@ -107,7 +128,7 @@
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
       <option name="_new_additionalArguments" value="&quot;&quot;" />
-      <option name="_new_target" value="&quot;test_optim_defaults.test_make_optimizer_defaults&quot;" />
+      <option name="_new_target" value="&quot;test_experiments_e17_e18.test_e18_preflight&quot;" />
       <option name="_new_targetType" value="&quot;PYTHON&quot;" />
       <method v="2" />
     </configuration>
@@ -141,28 +162,13 @@
       <option name="_new_targetType" value="&quot;PYTHON&quot;" />
       <method v="2" />
     </configuration>
-    <configuration name="Python tests for test_scheduler_and_roles.test_scheduler" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
-      <module name="_memformer" />
-      <option name="INTERPRETER_OPTIONS" value="" />
-      <option name="PARENT_ENVS" value="true" />
-      <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/tests" />
-      <option name="IS_MODULE_SDK" value="true" />
-      <option name="ADD_CONTENT_ROOTS" value="true" />
-      <option name="ADD_SOURCE_ROOTS" value="true" />
-      <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
-      <option name="_new_additionalArguments" value="&quot;&quot;" />
-      <option name="_new_target" value="&quot;test_scheduler_and_roles.test_scheduler&quot;" />
-      <option name="_new_targetType" value="&quot;PYTHON&quot;" />
-      <method v="2" />
-    </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python tests.Python tests for test_experiments_e17_e18.test_e18_preflight" />
+        <item itemvalue="Python tests.Python tests for test_experiments_e17_e18.test_e17_preflight" />
+        <item itemvalue="Python.experiments" />
         <item itemvalue="Python tests.Python tests for test_router_balance_and_dropout.test_router_noise_and_expert_dropout_smoke" />
         <item itemvalue="Python tests.Python tests for test_router_balance_and_dropout.test_memory_block_memdrop_smoke" />
-        <item itemvalue="Python tests.Python tests for test_loop_entry.test_train_experiment_ministeps" />
-        <item itemvalue="Python tests.Python tests for test_optim_defaults.test_make_optimizer_defaults" />
-        <item itemvalue="Python tests.Python tests for test_scheduler_and_roles.test_scheduler" />
       </list>
     </recent_temporary>
   </component>
@@ -202,6 +208,7 @@
     <option name="LAST_COMMIT_MESSAGE" value="initial prototype dncformer" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/_memformer$.coverage" NAME=" Coverage Results" MODIFIED="1756258534626" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
+    <SUITE FILE_PATH="coverage/_memformer$experiments.coverage" NAME="experiments Coverage Results" MODIFIED="1756260263543" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/dncformer/experiments" />
+    <SUITE FILE_PATH="coverage/_memformer$.coverage" NAME=" Coverage Results" MODIFIED="1756280359537" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/tests" />
   </component>
 </project>

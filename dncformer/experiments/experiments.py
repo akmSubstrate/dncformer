@@ -1,9 +1,20 @@
 # dncformer/train/experiments.py
 import time, json, torch, random, numpy as np
-from ..config import CFG
-from ..train.loop import train_experiment, start_tb_run
-from ..utils.helpers import free_head_and_cache
-from ..utils.env import report_cuda
+from dncformer.config import CFG
+from dncformer.train.loop import train_experiment, start_tb_run
+from dncformer.utils.helpers import free_head_and_cache
+from dncformer.utils.env import report_cuda
+from copy import deepcopy
+
+def _cfg_snapshot() -> dict:
+    # shallow is sufficient for scalar CFG fields
+    return deepcopy({k: getattr(CFG, k) for k in dir(CFG)
+                     if not k.startswith("_") and not callable(getattr(CFG, k))})
+
+def _cfg_restore(snap: dict):
+    # restore keys we saved
+    for k, v in snap.items():
+        setattr(CFG, k, v)
 
 def set_e14_curriculum(S=200):
     CFG.mixture_schedule = [(S, (0.0, 0.34, 0.33, 0.33)), (None, (0.4, 0.2, 0.2, 0.2))]
@@ -42,28 +53,88 @@ def set_e18_sequential():
     CFG.lora_enable = True
     set_e14_curriculum(S= max(50, int(CFG.train_steps//5)))
 
-def run_e17(label="E17_parallel", steps=1000, seed=1337, mixture=(0.4,0.2,0.2,0.2)):
+def run_e17(label="E17_parallel",
+            steps=1000, seed=1337,
+            mixture=(0.4,0.2,0.2,0.2),
+            hf_dataset: str | None = "tatsu-lab/alpaca",
+            hf_max_items: int = 5000):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(seed)
-    set_e17_parallel()
-    start_tb_run(f"{label}-s{seed}")
-    free_head_and_cache(); report_cuda(f"before {label}-s{seed}")
-    head, tok = train_experiment(steps=steps, warmup_steps=max(10, steps//20),
-                                 mixture_weights=mixture,
-                                 mixture_schedule=CFG.mixture_schedule,
-                                 gate_temp_schedule=CFG.gate_temp_schedule)
-    report_cuda(f"after  {label}-s{seed}"); free_head_and_cache()
-    return head, tok
 
-def run_e18(label="E18_sequential", steps=1000, seed=1337, mixture=(0.4,0.2,0.2,0.2)):
+    snap = _cfg_snapshot()
+    try:
+        set_e17_parallel()
+        start_tb_run(f"{label}-s{seed}")
+        free_head_and_cache(); report_cuda(f"before {label}-s{seed}")
+
+        head, tok = train_experiment(
+            steps=steps, warmup_steps=max(10, steps//20),
+            mixture_weights=mixture,
+            mixture_schedule=CFG.mixture_schedule,
+            gate_temp_schedule=CFG.gate_temp_schedule,
+            hf_dataset=hf_dataset, hf_max_items=hf_max_items,
+        )
+        report_cuda(f"after  {label}-s{seed}"); free_head_and_cache()
+        return head, tok
+    finally:
+        _cfg_restore(snap)
+
+
+def run_e18(label="E18_sequential",
+            steps=1000, seed=1337,
+            mixture=(0.4,0.2,0.2,0.2),
+            hf_dataset: str | None = "tatsu-lab/alpaca",
+            hf_max_items: int = 5000):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed)
     if torch.cuda.is_available(): torch.cuda.manual_seed_all(seed)
-    set_e18_sequential()
-    start_tb_run(f"{label}-s{seed}")
-    free_head_and_cache(); report_cuda(f"before {label}-s{seed}")
-    head, tok = train_experiment(steps=steps, warmup_steps=max(10, steps//20),
-                                 mixture_weights=mixture,
-                                 mixture_schedule=CFG.mixture_schedule,
-                                 gate_temp_schedule=CFG.gate_temp_schedule)
-    report_cuda(f"after  {label}-s{seed}"); free_head_and_cache()
-    return head, tok
+
+    snap = _cfg_snapshot()
+    try:
+        set_e18_sequential()
+        start_tb_run(f"{label}-s{seed}")
+        free_head_and_cache(); report_cuda(f"before {label}-s{seed}")
+
+        head, tok = train_experiment(
+            steps=steps, warmup_steps=max(10, steps//20),
+            mixture_weights=mixture,
+            mixture_schedule=CFG.mixture_schedule,
+            gate_temp_schedule=CFG.gate_temp_schedule,
+            hf_dataset=hf_dataset, hf_max_items=hf_max_items,
+        )
+        report_cuda(f"after  {label}-s{seed}"); free_head_and_cache()
+        return head, tok
+    finally:
+        _cfg_restore(snap)
+
+
+
+if __name__ == "__main__":  # change to "__main__" if you’ll run as a script
+    # Conservative, VRAM‑friendly runtime knobs for 24GB cards with LoRA:
+    CFG.precision     = "bf16"            # keeps matmul fast & stable on recent GPUs
+    CFG.max_seq_len   = 256               # HF windows kept short; synthetics already ≤128
+    CFG.batch_size    = max(4, getattr(CFG, "batch_size", 8))  # adjust if you see OOM
+    CFG.lr            = getattr(CFG, "lr", 2e-4)
+    CFG.weight_decay  = getattr(CFG, "weight_decay", 0.01)
+    # If your LoRA patch exposes these, they’re safe defaults:
+    if not hasattr(CFG, "lora_rank"):   CFG.lora_rank = 16
+    if not hasattr(CFG, "lora_alpha"):  CFG.lora_alpha = 32
+    if not hasattr(CFG, "lora_dropout"): CFG.lora_dropout = 0.05
+
+    # Memory‑first curriculum in both experiments; HF resumes after S≈steps/5
+    mixture      = (0.0, 0.34, 0.33, 0.33)   # (hf, copy, repeat, nback)
+    hf_dataset   = "tatsu-lab/alpaca"
+    hf_max_items = 8000                      # more variety without blowing RAM
+    steps        = 1000                      # raise if you want longer tails
+    seeds        = (1337, 2027, 4242)
+
+    for s in seeds:
+        run_e17(label="E17_parallel",
+                steps=steps, seed=s,
+                mixture=mixture,
+                hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+        # tiny spacer avoids TB dir collisions on fast filesystems
+        time.sleep(1.0)
+        run_e18(label="E18_sequential",
+                steps=steps, seed=s,
+                mixture=mixture,
+                hf_dataset=hf_dataset, hf_max_items=hf_max_items)

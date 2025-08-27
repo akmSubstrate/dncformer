@@ -205,6 +205,44 @@ def train_experiment(
                     if w_means:
                         loss = loss + lam_w * (sum(w_means) / len(w_means))
 
+            # Gate collapse prevention
+            # soft expert load-balance (parallel memory blocks)
+            lb_lambda = float(getattr(CFG, "router_balance_lambda", 0.0))
+            if lb_lambda > 0.0 and isinstance(aux, dict) and "per_block" in aux:
+                try:
+                    lb_accum = 0.0;
+                    lb_count = 0
+                    for m in aux["per_block"]:
+                        pi_mean = m.get("experts_pi_mean", None)  # list length K+1 (vanilla + K experts)
+                        if isinstance(pi_mean, (list, tuple)) and len(pi_mean) >= 3:
+                            # drop vanilla path (index 0); balance only memory experts
+                            mem = torch.tensor(pi_mean[1:], dtype=torch.float32, device=in_ids.device)
+                            s = float(mem.sum().item())
+                            if s > 0.0:
+                                # conditional uniform target: each expert should get s/K
+                                K = mem.numel()
+                                target = (s / K)
+                                lb = ((mem - target) ** 2).mean()
+                                lb_accum = lb_accum + lb
+                                lb_count += 1
+                    if lb_count > 0:
+                        loss = loss + lb_lambda * (lb_accum / lb_count)
+                except Exception:
+                    pass
+
+            # Gate collapse prevention
+            # cross-block memory-usage balance (sequential memory blocks)
+            xb_lambda = float(getattr(CFG, "cross_block_balance_lambda", 0.0))
+            if xb_lambda > 0.0 and isinstance(gates, (list, tuple)) and len(gates) >= 2:
+                try:
+                    # each g: (B,T,1) = "memory usage" gate for that block
+                    g_means = [reduce_gate_tensor(g).mean() for g in gates]
+                    g_stack = torch.stack(g_means)  # (num_blocks,)
+                    var = torch.var(g_stack, unbiased=False)
+                    loss = loss + xb_lambda * var
+                except Exception:
+                    pass
+
         # Optim step
         if amp_dtype in (torch.float16, torch.bfloat16):
             scaler.scale(loss).backward()

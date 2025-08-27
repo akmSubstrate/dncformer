@@ -20,13 +20,42 @@ class MixtureSampler:
         return self.gens[idx](batch)
 
     def set_weights(self, weights):
+        """
+        Update mixture probabilities at runtime (used by schedules).
+
+        Accepts weights of arbitrary length and aligns them to the number of
+        active generators. If a 4-tuple (HF, copy, repeat, nback) is supplied
+        but the HF generator is *not* present, we drop the first element.
+        """
+        import torch as _t
+
         ws = list(map(float, weights))
-        t = torch.tensor(ws, dtype=torch.float32, device=self.p.device)
+        n = len(self.gens)
+
+        if len(ws) != n:
+            # Case 1: schedule includes HF but mixer has only synthetics
+            if len(ws) == n + 1 and ("hf" not in self.names):
+                ws = ws[1:]  # drop HF
+
+            # Case 2: schedule longer than gens; truncate sensibly
+            elif len(ws) > n:
+                # If 'hf' is absent, prefer to keep the *last* n entries (copy, repeat, nback)
+                ws = ws[-n:] if ("hf" not in self.names) else ws[:n]
+
+            # Case 3: schedule shorter than gens; pad uniformly
+            else:
+                pad_val = (sum(ws) / len(ws)) if ws else 1.0
+                ws = ws + [pad_val] * (n - len(ws))
+
+            print(f"[MixtureSampler] aligned schedule weights to {n} gens (names={self.names}): {ws}")
+
+        # normalize and update tensor
+        t = _t.tensor(ws, dtype=_t.float32)
         s = float(t.sum().item())
-        if s <= 0: raise ValueError("Mixture weights must sum to > 0")
-        self.p = t / s; self.weights = ws
-        if hasattr(self, "names") and len(self.names) != len(ws):
-            print(f"[MixtureSampler] Warning: len(names)={len(self.names)} != len(weights)={len(ws)}")
+        if s <= 0:
+            raise ValueError("Mixture weights must sum to > 0")
+        self.p = t / s
+        self.weights = ws
 
 def build_mixer(tok, weights, hf_dataset="tatsu-lab/alpaca", hf_max_items=2000) -> MixtureSampler:
     mx = int(getattr(tok, "model_max_length", 256) or 256)
