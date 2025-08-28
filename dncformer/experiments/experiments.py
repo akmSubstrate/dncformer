@@ -270,40 +270,110 @@ def run_e17_18b_sweep(steps=3000, seeds=(1337,2027,4242,1561,6969,3030), mixture
                                          hf_dataset=hf_dataset, hf_max_items=hf_max_items)
     return results
 
-if __name__ == "__main__":  # change to "__main__" if you’ll run as a script
-    # Conservative, VRAM‑friendly runtime knobs for 24GB cards with LoRA:
-    CFG.precision     = "bf16"            # keeps matmul fast & stable on recent GPUs
-    CFG.max_seq_len   = 256               # HF windows kept short; synthetics already ≤128
-    CFG.batch_size    = max(4, getattr(CFG, "batch_size", 8))  # adjust if you see OOM
-    CFG.lr            = getattr(CFG, "lr", 2e-4)
-    CFG.weight_decay  = getattr(CFG, "weight_decay", 0.01)
-    # If your LoRA patch exposes these, they’re safe defaults:
-    if not hasattr(CFG, "lora_rank"):   CFG.lora_rank = 16
-    if not hasattr(CFG, "lora_alpha"):  CFG.lora_alpha = 32
-    if not hasattr(CFG, "lora_dropout"): CFG.lora_dropout = 0.05
+def _parse_seeds_arg(s: str) -> tuple[int, ...]:
+    s = (s or "").strip()
+    if not s:
+        return (1337,)
+        out = []
+    for tok in s.replace(" ", "").split(","):
+        if not tok:
+            continue
+        try:
+            out.append(int(tok))
+        except Exception:
+            pass
+        return tuple(out) or (1337,)
 
-    # Memory‑first curriculum in both experiments; HF resumes after S≈steps/5
-    mixture      = (0.0, 0.34, 0.33, 0.33)   # (hf, copy, repeat, nback)
-    hf_dataset   = "tatsu-lab/alpaca"
-    hf_max_items = 8000
-    steps        = 1000
-    #seeds        = (1337, 2027, 4242)
-    seeds        = (1337,)
 
-    sweep_start = time.time()
-    for s in seeds:
-        start = time.time()
-        run_e17(label="E17_parallel",
-                steps=steps, seed=s,
-                mixture=mixture,
-                hf_dataset=hf_dataset, hf_max_items=hf_max_items)
-        print(f"[ Run time: {timedelta(seconds = time.time()-start)} ]")
-        start = time.time()
-        # tiny spacer avoids TB dir collisions on fast filesystems
-        time.sleep(1.0)
-        run_e18(label="E18_sequential",
-                steps=steps, seed=s,
-                mixture=mixture,
-                hf_dataset=hf_dataset, hf_max_items=hf_max_items)
-        print(f"[ Run time: {timedelta(seconds = time.time()-start)} ]")
-    print(f"[ Sweep time: {timedelta(seconds= time.time()-sweep_start)} for {int(len(seeds)*2)} runs total")
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="DNCFormer E17/E18 experiment runner")
+
+    ap.add_argument("--mode", choices=["e17", "e18", "sweep"], default="sweep",
+                    help = "Run a single E17, a single E18, or the E17/E18-b sweep (default).")
+    ap.add_argument("--steps", type=int, default=1000, help="Total training steps.")
+    ap.add_argument("--seeds", type=str, default="1337,2027,4242",
+                    help = "Comma-separated seed list for sweep mode.")
+    ap.add_argument("--hf-dataset", type=str, default=None,
+                    help = 'HF dataset id; use "none" to disable and run synthetic-only.')
+    ap.add_argument("--hf-max-items", type=int, default=0,
+                    help = "Cap on HF samples; 0 means small/light or synthetic-only when dataset is none.")
+    ap.add_argument("--label-prefix", type=str, default="E17E18b",
+                    help = "Prefix added to TB run names during sweep.")
+    ap.add_argument("--chunk-len", type=int, default=50,
+                    help = "StickyMixtureSampler chunk length for task segments.")
+    args = ap.parse_args()
+
+  # Normalize HF dataset sentinel
+    hf_ds = args.hf_dataset
+
+    if isinstance(hf_ds, str) and hf_ds.lower() in ("none", ""):
+        hf_ds = None
+
+
+    if args.mode == "e17":
+    # Single E17 (parallel) run—use the first seed parsed
+        seed0 = _parse_seeds_arg(args.seeds)[0]
+        run_e17(
+            steps = args.steps,
+            seed = seed0,
+            hf_dataset = hf_ds,
+            hf_max_items = args.hf_max_items,
+        )
+    elif args.mode == "e18":
+    # Single E18 (sequential) run—use the first seed parsed
+        seed0 = _parse_seeds_arg(args.seeds)[0]
+        run_e18(
+            steps = args.steps,
+            seed = seed0,
+            hf_dataset = hf_ds,
+            hf_max_items = args.hf_max_items,
+        )
+    else:
+    # Sweep: E17 and E18 across multiple seeds with chunked schedule
+        run_e17_18b_sweep(
+            steps = args.steps,
+            seeds = _parse_seeds_arg(args.seeds),
+            hf_dataset = hf_ds,
+            hf_max_items = args.hf_max_items,
+            label_prefix = args.label_prefix,
+            chunk_len = args.chunk_len,
+        )
+
+# # Conservative, VRAM‑friendly runtime knobs for 24GB cards with LoRA:
+    # CFG.precision     = "bf16"            # keeps matmul fast & stable on recent GPUs
+    # CFG.max_seq_len   = 256               # HF windows kept short; synthetics already ≤128
+    # CFG.batch_size    = max(4, getattr(CFG, "batch_size", 8))  # adjust if you see OOM
+    # CFG.lr            = getattr(CFG, "lr", 2e-4)
+    # CFG.weight_decay  = getattr(CFG, "weight_decay", 0.01)
+    # # If your LoRA patch exposes these, they’re safe defaults:
+    # if not hasattr(CFG, "lora_rank"):   CFG.lora_rank = 16
+    # if not hasattr(CFG, "lora_alpha"):  CFG.lora_alpha = 32
+    # if not hasattr(CFG, "lora_dropout"): CFG.lora_dropout = 0.05
+    #
+    # # Memory‑first curriculum in both experiments; HF resumes after S≈steps/5
+    # mixture      = (0.0, 0.34, 0.33, 0.33)   # (hf, copy, repeat, nback)
+    # hf_dataset   = "tatsu-lab/alpaca"
+    # hf_max_items = 8000
+    # steps        = 1000
+    # #seeds        = (1337, 2027, 4242)
+    # seeds        = (1337,)
+    #
+    # sweep_start = time.time()
+    # for s in seeds:
+    #     start = time.time()
+    #     run_e17(label="E17_parallel",
+    #             steps=steps, seed=s,
+    #             mixture=mixture,
+    #             hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+    #     print(f"[ Run time: {timedelta(seconds = time.time()-start)} ]")
+    #     start = time.time()
+    #     # tiny spacer avoids TB dir collisions on fast filesystems
+    #     time.sleep(1.0)
+    #     run_e18(label="E18_sequential",
+    #             steps=steps, seed=s,
+    #             mixture=mixture,
+    #             hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+    #     print(f"[ Run time: {timedelta(seconds = time.time()-start)} ]")
+    # print(f"[ Sweep time: {timedelta(seconds= time.time()-sweep_start)} for {int(len(seeds)*2)} runs total")
