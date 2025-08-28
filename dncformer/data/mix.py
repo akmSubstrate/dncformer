@@ -57,7 +57,50 @@ class MixtureSampler:
         self.p = t / s
         self.weights = ws
 
-def build_mixer(tok, weights, hf_dataset="tatsu-lab/alpaca", hf_max_items=2000) -> MixtureSampler:
+class StickyMixtureSampler:
+    """
+    Wraps a MixtureSampler and holds on to the same index for `chunk_steps` batches.
+    - Respects MixtureSampler.set_weights() updates (probabilities change for the *next* pick).
+    - Does not reset mid-chunk on schedule changes (keeps things stable).
+    """
+    def __init__(self, base_sampler, chunk_steps: int, reset_on_set_weights: bool = False):
+        assert chunk_steps >= 1
+        self.base = base_sampler
+        self.chunk_steps = int(chunk_steps)
+        self.reset_on_set_weights = bool(reset_on_set_weights)
+        self._left = 0
+        self._idx = None
+        self.last_name = None
+
+    def __len__(self):
+        return len(self.base.gens)
+
+    def set_weights(self, weights):
+        # propagate to underlying sampler
+        self.base.set_weights(weights)
+        if self.reset_on_set_weights:
+            self._left = 0  # force a new choice next call
+
+    def _pick_new_index(self):
+        # draw one from the base sampler's categorical distribution
+        import torch as _t
+        p = getattr(self.base, "p", None)
+        if p is None:
+            # fall back to uniform if base has a different representation
+            self._idx = 0
+        else:
+            self._idx = int(_t.multinomial(p, 1).item())
+        self._left = self.chunk_steps
+
+    def __call__(self, batch: int):
+        if self._left <= 0 or self._idx is None:
+            self._pick_new_index()
+        self._left -= 1
+        # delegate to the underlying generator
+        self.last_name = self.base.names[self._idx]
+        return self.base.gens[self._idx](batch)
+
+def build_mixer(tok, weights, hf_dataset="tatsu-lab/alpaca", hf_max_items=2000, sticky_chunk_steps: int | None = None):
     mx = int(getattr(tok, "model_max_length", 256) or 256)
     pad_id = getattr(tok, "pad_token_id", 0) or 0
     gens, wts, names = [], [], []
@@ -131,4 +174,23 @@ def build_mixer(tok, weights, hf_dataset="tatsu-lab/alpaca", hf_max_items=2000) 
 
     gens.extend([gen_copy, gen_repeat, gen_nback])
     wts.extend(s_w); names.extend(["copy","repeat","nback"])
-    return MixtureSampler(gens, wts, names=names)
+
+    sampler = MixtureSampler(gens, wts, names=names)
+    # optional chunking (prefer explicit arg; else CFG.mixture_chunk_steps if present)
+    chunk = None
+    if isinstance(sticky_chunk_steps, int) and sticky_chunk_steps > 1:
+        chunk = sticky_chunk_steps
+    else:
+        # optional: pull from global config if present (correct package level)
+        try:
+            from ..config import CFG  # fixed import
+            c = int(getattr(CFG, "mixture_chunk_steps", 0))
+            if c > 1:
+                chunk = c
+        except Exception:
+            pass
+
+    if chunk:
+        sampler = StickyMixtureSampler(sampler, chunk_steps=int(chunk), reset_on_set_weights=False)
+
+    return sampler

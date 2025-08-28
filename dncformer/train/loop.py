@@ -118,7 +118,13 @@ def train_experiment(
     # Build model & tokenizer on the configured device
     tok, head = build_model_and_tokenizer()
     optim = make_optimizer(head)
-    mixer = build_mixer(tok, mixture_weights, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+    mixer = build_mixer(
+        tok,
+        mixture_weights,
+        hf_dataset=hf_dataset,
+        hf_max_items=hf_max_items,
+        sticky_chunk_steps=CFG.mixture_chunk_steps,
+    )
 
     # dynamic LR scheduler
     scheduler = make_continuous_scheduler(
@@ -170,6 +176,17 @@ def train_experiment(
 
     for step in range(1, steps + 1):
         _apply_schedules(step)
+        # (optional) one-time sanity echo that stickiness is live
+        if step == 1:
+            try:
+                ck = getattr(mixer, "chunk_steps", None)
+                if ck is None and hasattr(mixer, "base"):
+                    ck = getattr(mixer.base, "chunk_steps", None)
+                if ck:
+                    print(f"[Mixture] sticky chunking active: chunk_steps={ck}")
+            except Exception:
+                print(f"[Mixture] WARNING: sticky chunking not active")
+                pass
 
         in_ids = mixer(batch_size).to(next(head.parameters()).device)
         with torch.autocast('cuda', dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):

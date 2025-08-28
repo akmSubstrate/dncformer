@@ -1,0 +1,4 @@
+label,block,first_collapse_step>=0.9_x2,final_g_mean
+E17_parallel-s1337,0,120,0.4179244935512543
+E18_sequential-s1337,0,190,0.0178876761347055
+E18_sequential-s1337,1,190,0.8774645328521729

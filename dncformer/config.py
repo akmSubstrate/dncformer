@@ -102,6 +102,9 @@ class DNCFormerConfig:
     block_memdrop_prob: float = 0.0  # B2: chance to drop a block’s memory path (training only, head-level)
     cross_block_balance_lambda: float = 0.0  # B1: weight for cross-block memory-usage balance
 
+    # Training scheduler configs
+    mixture_chunk_steps: int = 200
+
 
 def load_config_yaml(path: str) -> DNCFormerConfig:
     with open(path, "r", encoding="utf-8") as f:
