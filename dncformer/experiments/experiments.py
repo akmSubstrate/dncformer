@@ -1,6 +1,7 @@
 # dncformer/train/experiments.py
 from copy import deepcopy
 from datetime import timedelta
+import argparse, re
 import time, json, torch, random, numpy as np
 from dncformer.config import CFG
 from dncformer.train.loop import train_experiment, start_tb_run
@@ -270,76 +271,121 @@ def run_e17_18b_sweep(steps=3000, seeds=(1337,2027,4242,1561,6969,3030), mixture
                                          hf_dataset=hf_dataset, hf_max_items=hf_max_items)
     return results
 
-def _parse_seeds_arg(s: str) -> tuple[int, ...]:
-    s = (s or "").strip()
+def _parse_seeds_arg(arg) -> tuple[int, ...]:
+    """
+    Robust seed parser:
+      - Accepts comma/space separated list: '1337,2027 4242'
+      - Accepts ranges: '100-103' -> (100,101,102,103)
+      - Accepts repeated / mixed forms, dedupes preserving order
+    """
+    if arg is None:
+        return (1337,)
+
+    # If caller already passed a list/tuple, coerce to ints directly.
+    if isinstance(arg, (list, tuple)):
+        try:
+            out = [int(x) for x in arg]
+        except Exception:
+            out = []
+        return tuple(out) if out else (1337,)
+
+    s = str(arg).strip()
     if not s:
         return (1337,)
-        out = []
-    for tok in s.replace(" ", "").split(","):
-        if not tok:
+
+    parts = re.split(r"[,\s]+", s)
+    seen = set()
+    out: list[int] = []
+
+    for p in parts:
+        if not p:
             continue
-        try:
-            out.append(int(tok))
-        except Exception:
-            pass
-        return tuple(out) or (1337,)
+        if "-" in p:
+            # single range "a-b"
+            try:
+                a_str, b_str = p.split("-", 1)
+                a, b = int(a_str), int(b_str)
+                seq = range(a, b + 1) if a <= b else range(a, b - 1, -1)
+                for v in seq:
+                    if v not in seen:
+                        out.append(v); seen.add(v)
+            except Exception:
+                # fall back to single int parse
+                try:
+                    v = int(p)
+                    if v not in seen:
+                        out.append(v); seen.add(v)
+                except Exception:
+                    pass
+        else:
+            try:
+                v = int(p)
+                if v not in seen:
+                    out.append(v); seen.add(v)
+            except Exception:
+                pass
 
+    return tuple(out) if out else (1337,)
 
-if __name__ == "__main__":
-    import argparse
+def main():
+    parser = argparse.ArgumentParser(description="DNCFormer experiment launcher")
+    parser.add_argument("--mode", type=str, default="sweep",
+                        choices=["e17", "e18", "sweep"],
+                        help="Run E17 only, E18 only, or the E17/E18-b sweep.")
+    parser.add_argument("--steps", type=int, default=1000, help="Training steps per run.")
+    parser.add_argument("--seeds", type=str, default="1337,2027,4242",
+                        help="Comma/space separated list or ranges (e.g. '1337,2027 4242' or '100-103').")
+    parser.add_argument("--hf-dataset", type=str, default="tatsu-lab/alpaca",
+                        help="HF dataset id, or 'None' to disable.")
+    parser.add_argument("--hf-max-items", type=int, default=5000, help="Max HF samples to pull.")
+    parser.add_argument("--chunk-len", type=int, default=0,
+                        help="Sticky chunk length for the mixture sampler (0 = disabled).")
+    parser.add_argument("--label-prefix", type=str, default=None,
+                        help="Optional prefix to prepend to TB run labels.")
+    args = parser.parse_args()
 
-    ap = argparse.ArgumentParser(description="DNCFormer E17/E18 experiment runner")
+    # Normalize seeds
+    seeds = _parse_seeds_arg(args.seeds)
 
-    ap.add_argument("--mode", choices=["e17", "e18", "sweep"], default="sweep",
-                    help = "Run a single E17, a single E18, or the E17/E18-b sweep (default).")
-    ap.add_argument("--steps", type=int, default=1000, help="Total training steps.")
-    ap.add_argument("--seeds", type=str, default="1337,2027,4242",
-                    help = "Comma-separated seed list for sweep mode.")
-    ap.add_argument("--hf-dataset", type=str, default=None,
-                    help = 'HF dataset id; use "none" to disable and run synthetic-only.')
-    ap.add_argument("--hf-max-items", type=int, default=0,
-                    help = "Cap on HF samples; 0 means small/light or synthetic-only when dataset is none.")
-    ap.add_argument("--label-prefix", type=str, default="E17E18b",
-                    help = "Prefix added to TB run names during sweep.")
-    ap.add_argument("--chunk-len", type=int, default=50,
-                    help = "StickyMixtureSampler chunk length for task segments.")
-    args = ap.parse_args()
+    # Normalize HF dataset (allow 'None' on CLI)
+    hf_dataset = None if (args.hf_dataset is None or str(args.hf_dataset).lower() == "none") else args.hf_dataset
+    hf_max = int(args.hf_max_items)
 
-  # Normalize HF dataset sentinel
-    hf_ds = args.hf_dataset
+    # Wire sticky-chunking into the run (the training loop will read CFG.sticky_mix)
+    if getattr(args, "chunk_len", 0) and args.chunk_len > 0:
+        CFG.sticky_mix = int(args.chunk_len)
+    else:
+        # Ensure we don't carry a previous sticky setting into a new run
+        if hasattr(CFG, "sticky_mix"):
+            try:
+                delattr(CFG, "sticky_mix")
+            except Exception:
+                pass
 
-    if isinstance(hf_ds, str) and hf_ds.lower() in ("none", ""):
-        hf_ds = None
-
+    # Optional label prefix (purely cosmetic for TB dir names)
+    lp = (args.label_prefix.strip() if args.label_prefix else None)
 
     if args.mode == "e17":
-    # Single E17 (parallel) run—use the first seed parsed
-        seed0 = _parse_seeds_arg(args.seeds)[0]
-        run_e17(
-            steps = args.steps,
-            seed = seed0,
-            hf_dataset = hf_ds,
-            hf_max_items = args.hf_max_items,
-        )
+        for s in seeds:
+            label = f"{lp}-E17_parallel" if lp else "E17_parallel"
+            run_e17(label=label, steps=args.steps, seed=s,
+                    hf_dataset=hf_dataset, hf_max_items=hf_max)
+
     elif args.mode == "e18":
-    # Single E18 (sequential) run—use the first seed parsed
-        seed0 = _parse_seeds_arg(args.seeds)[0]
-        run_e18(
-            steps = args.steps,
-            seed = seed0,
-            hf_dataset = hf_ds,
-            hf_max_items = args.hf_max_items,
-        )
-    else:
-    # Sweep: E17 and E18 across multiple seeds with chunked schedule
-        run_e17_18b_sweep(
-            steps = args.steps,
-            seeds = _parse_seeds_arg(args.seeds),
-            hf_dataset = hf_ds,
-            hf_max_items = args.hf_max_items,
-            label_prefix = args.label_prefix,
-            chunk_len = args.chunk_len,
-        )
+        for s in seeds:
+            label = f"{lp}-E18_sequential" if lp else "E18_sequential"
+            run_e18(label=label, steps=args.steps, seed=s,
+                    hf_dataset=hf_dataset, hf_max_items=hf_max)
+
+    else:  # "sweep": E17 + E18-b for each seed
+        # The sweep helper already loops seeds; pass sticky via CFG above.
+        run_e17_18b_sweep(steps=args.steps,
+                         seeds=seeds,
+                         hf_dataset=hf_dataset,
+                         hf_max_items=hf_max)
+
+if __name__ == "__main__":
+    main()
 
 # # Conservative, VRAM‑friendly runtime knobs for 24GB cards with LoRA:
     # CFG.precision     = "bf16"            # keeps matmul fast & stable on recent GPUs

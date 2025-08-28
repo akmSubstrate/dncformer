@@ -5,7 +5,6 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="782c5555-6d41-4b3c-b9b9-c888c42c0ef5" name="Changes" comment="initial prototype dncformer">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/dncformer/experiments/experiments.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/experiments/experiments.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
