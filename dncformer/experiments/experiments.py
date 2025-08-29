@@ -260,15 +260,29 @@ def run_e18_b(label="E18_sequential_b",
         _cfg_restore(snap)
 
 # Optional convenience sweep (single-GPU sequential; multi-GPU note below)
-def run_e17_18b_sweep(steps=3000, seeds=(1337,2027,4242,1561,6969,3030), mixture=(0.4,0.2,0.2,0.2),
-                      hf_dataset="tatsu-lab/alpaca", hf_max_items=8000):
+def run_e17_18b_sweep(steps=3000,
+                      seeds=(1337, 2027, 4242),
+                      chunk_len: int | None = None,
+                      order=("copy", "repeat", "nback"),
+                      hf_dataset="tatsu-lab/alpaca",
+                      hf_max_items=8000):
+    """
+    Convenience sweep: for each seed, run E17b (parallel) then E18b (sequential).
+    `chunk_len` controls the sticky batch generator window (in steps).
+    """
     results = {}
+    # choose chunk length: CLI wins; else CFG.sticky_mix; else 200 default
+    ck = int(chunk_len or getattr(CFG, "sticky_mix", 0) or 200)
     for s in seeds:
-        results[(f"E17b", s)] = run_e17_b(steps=steps, seed=s, mixture=mixture,
-                                         hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+        results[("E17b", s)] = run_e17_b(
+            steps=steps, seed=s, chunk_len=ck, order=order,
+            hf_dataset=hf_dataset, hf_max_items=hf_max_items
+        )
     for s in seeds:
-        results[(f"E18b", s)] = run_e18_b(steps=steps, seed=s, mixture=mixture,
-                                         hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+        results[("E18b", s)] = run_e18_b(
+            steps=steps, seed=s, chunk_len=ck, order=order,
+            hf_dataset=hf_dataset, hf_max_items=hf_max_items
+        )
     return results
 
 def _parse_seeds_arg(arg) -> tuple[int, ...]:
@@ -324,7 +338,6 @@ def _parse_seeds_arg(arg) -> tuple[int, ...]:
                     out.append(v); seen.add(v)
             except Exception:
                 pass
-
     return tuple(out) if out else (1337,)
 
 def main():
@@ -377,12 +390,13 @@ def main():
             run_e18(label=label, steps=args.steps, seed=s,
                     hf_dataset=hf_dataset, hf_max_items=hf_max)
 
-    else:  # "sweep": E17 + E18-b for each seed
-        # The sweep helper already loops seeds; pass sticky via CFG above.
+    else:  # "sweep": E17b + E18b for each seed
+        # The sweep helper loops seeds itself; pass through the CLI chunk length.
         run_e17_18b_sweep(steps=args.steps,
-                         seeds=seeds,
-                         hf_dataset=hf_dataset,
-                         hf_max_items=hf_max)
+                          seeds = seeds,
+                          chunk_len = args.chunk_len,
+                          hf_dataset = hf_dataset,
+                          hf_max_items = hf_max)
 
 if __name__ == "__main__":
     main()
