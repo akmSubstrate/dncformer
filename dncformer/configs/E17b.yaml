@@ -1,0 +1,24 @@
+train:
+  steps: 6000
+  batch_size: 8
+  warmup_steps: 300
+  log_every: 10
+
+mixer:
+  sticky_chunk: 200
+  order: ["repeat", "nback", "copy"]   # rotate per chunk
+
+datasets:
+  - { name: "copy",    params: { T: 128, vocab: 120 }, weight: 1.0, alias: "copy" }
+  - { name: "repeat",  params: { T: 128, vocab: 120 }, weight: 1.0, alias: "repeat" }
+  - { name: "nback",   params: { T: 128, n: 5, vocab: 60 }, weight: 1.0, alias: "nback" }
+
+model:
+  blocks: 1
+  mem_experts: 2
+  lora_enable: true
+
+anti_collapse:
+  router_balance_lambda: 0.003
+  router_noise_std: 0.05
+  expert_dropout_p: 0.05

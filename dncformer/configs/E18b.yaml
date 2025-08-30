@@ -1,0 +1,26 @@
+train:
+  steps: 6000
+  batch_size: 8
+  warmup_steps: 300
+  log_every: 10
+
+mixer:
+  sticky_chunk: 200
+  order: ["repeat", "copy", "nback"]
+
+datasets:
+  - { name: "copy",   params: { T: 128, vocab: 120 }, weight: 1.0, alias: "copy" }
+  - { name: "repeat", params: { T: 128, vocab: 120 }, weight: 1.0, alias: "repeat" }
+  - { name: "nback",  params: { T: 128, n: 5, vocab: 60 }, weight: 1.0, alias: "nback" }
+
+model:
+  blocks: 2
+  per_block_cfg:
+    - { N: 192, W: 32, R: 1, gate_temp: 1.0, free_bias: 0.20 }
+    - { N:  64, W: 64, R: 1, gate_temp: 0.9, free_bias: -0.20 }
+  lora_enable: true
+
+anti_collapse:
+  cross_block_balance_lambda: 0.002
+  block_memdrop_prob: 0.03
+  router_noise_std: 0.02

@@ -6,7 +6,6 @@
   <component name="ChangeListManager">
     <list default="true" id="782c5555-6d41-4b3c-b9b9-c888c42c0ef5" name="Changes" comment="initial prototype dncformer">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dncformer/experiments/experiments.py" beforeDir="false" afterPath="$PROJECT_DIR$/dncformer/experiments/experiments.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -46,15 +45,19 @@
   &quot;keyToString&quot;: {
     &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;WebServerToolWindowFactoryState&quot;: &quot;false&quot;,
     &quot;git-widget-placeholder&quot;: &quot;dev__lib&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
     &quot;last_opened_file_path&quot;: &quot;C:/Users/andre/Documents/_projects/_memformer&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
     &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
     &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;org.jetbrains.plugins.notebooks.jupyter.connections.configuration.JupyterServerConfigurable&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.github.continuedev.continueintellijextension.services.ContinueExtensionConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;,
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
 }</component>
@@ -81,6 +84,7 @@
   <component name="RunManager" selected="Python.experiments">
     <configuration name="experiments" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
+      <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <envs>
@@ -103,6 +107,7 @@
     </configuration>
     <configuration name="Python tests for test_experiments_e17_e18.test_TBfix" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
+      <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <option name="SDK_HOME" value="" />
@@ -118,6 +123,7 @@
     </configuration>
     <configuration name="Python tests for test_experiments_e17_e18.test_e17_preflight" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
+      <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <option name="SDK_HOME" value="" />
@@ -133,6 +139,7 @@
     </configuration>
     <configuration name="Python tests for test_experiments_e17_e18.test_e18_preflight" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
+      <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <option name="SDK_HOME" value="" />
@@ -148,6 +155,7 @@
     </configuration>
     <configuration name="Python tests for test_sticky_chunks.test_sticky_chunks_obvious" type="tests" factoryName="Autodetect" temporary="true" nameIsGenerated="true">
       <module name="_memformer" />
+      <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <option name="SDK_HOME" value="" />
@@ -171,6 +179,14 @@
       </list>
     </recent_temporary>
   </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-js-predefined-d6986cc7102b-b598e85cdad2-JavaScript-PY-252.25557.130" />
+        <option value="bundled-python-sdk-1bde30d8e611-7b97d883f26b-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.25557.130" />
+      </set>
+    </attachedChunks>
+  </component>
   <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">
@@ -187,6 +203,14 @@
       <workItem from="1754958761738" duration="20574000" />
       <workItem from="1755191380110" duration="80647000" />
       <workItem from="1755937190749" duration="40218000" />
+      <workItem from="1756488822752" duration="2555000" />
+      <workItem from="1756492646533" duration="4000" />
+      <workItem from="1756492691747" duration="94000" />
+      <workItem from="1756493048198" duration="1281000" />
+      <workItem from="1756495960708" duration="7570000" />
+      <workItem from="1756508059473" duration="496000" />
+      <workItem from="1756508567415" duration="1668000" />
+      <workItem from="1756510256538" duration="3697000" />
     </task>
     <task id="LOCAL-00001" summary="initial prototype dncformer">
       <option name="closed" value="true" />
