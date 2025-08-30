@@ -12,7 +12,7 @@ from ..log import tb as tblog
 from ..model.head import DNCFormerHead
 from ..utils.env import choose_amp_dtype, report_cuda, sdpa_ctx
 from ..utils.helpers import reduce_gate_tensor, gate_metrics
-from ..data.mix import build_mixer
+from ..data.mix import StickyMixtureSampler
 from dncformer.data.registry import build_sampler_from_cfg
 
 def _maybe_apply_lora(base: nn.Module):
@@ -97,16 +97,47 @@ def train_runner(
     opt = _make_optimizer(head)
     sch = WarmupCosine(opt, warmup_steps=warmup_steps, total_steps=steps, min_lr_ratio=min_lr_ratio)
 
+    # Data sampler / YAML loading logic
     try:
         data_cfg = getattr(CFG, "data", None)
     except Exception:
         data_cfg = None
+    if not (isinstance(data_cfg, dict) and data_cfg.get("tasks")):
+        raise ValueError(
+            "CFG.data.tasks is missing or empty. 0.3.x runner requires a YAML config with a 'data:' section.\n"
+            "Example:\n"
+            "  data:\n"
+            "    sticky_mix: 10\n"
+            "    tasks:\n"
+            "      - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca, weight: 0.25, max_items: 4000 }\n"
+            "      - { name: tinystories, type: hf, dataset: roneneldan/TinyStories, weight: 0.25, max_items: 4000 }\n"
+            "      - { name: copy, type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }\n"
+            "      - { name: nback, type: synth, weight: 0.30, params: { T: 128, n: 5, vocab: 100 } }"
+        )
+    mixer = build_sampler_from_cfg(tok, data_cfg)
+    # Scheduler echo for context/debug
+    try:
+        names = getattr(mixer.base, "names", getattr(mixer, "names", None))
+        wts = getattr(mixer.base, "weights", getattr(mixer, "weights", None))
+        stick = getattr(CFG, "data", {}).get("sticky_mix", getattr(CFG, "sticky_mix", 0))
+        if names and wts:
+            print(f"[data] sampler tasks={names} weights={list(map(float, wts))} sticky_mix={int(stick) or 0}")
+    except Exception:
+        pass
 
-    if isinstance(data_cfg, dict) and data_cfg.get("tasks"):
-        mixer = build_sampler_from_cfg(tok, data_cfg)
-    else:
-        # legacy 4-slot fallback
-        mixer = build_mixer(tok, mixture, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+    # Optional CLI override: make the sampler sticky even if YAML didn't set sticky_mix.
+    if isinstance(chunk_len, int) and chunk_len > 1 and not hasattr(mixer, "base"):
+        mixer = StickyMixtureSampler(mixer, chunk_steps=int(chunk_len), reset_on_set_weights=False)
+
+    # One-time sampler summary for sanity
+    try:
+        base = mixer.base if hasattr(mixer, "base") else mixer
+        p = getattr(base, "p", None)
+        probs = (p.detach().cpu().tolist() if hasattr(p, "detach") else None)
+        print(f"[data] using tasks={getattr(base, 'names', None)} | weights={getattr(base, 'weights', None)} | "
+              f"sticky={getattr(mixer, 'chunk_steps', 1) if hasattr(mixer, 'chunk_steps') else 1} | p={probs}")
+    except Exception:
+        pass
 
     amp_dtype = choose_amp_dtype(getattr(CFG, "precision", "bf16"))
     device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -168,34 +199,40 @@ def train_runner(
         sch.step()
 
         if step % log_every == 0 and tblog.tb and tblog.tb.writer:
+            print("[tb] logging at step", step, "task=", getattr(mixer, 'last_name', '?'))
+            w = tblog.tb.writer  # local alias
             # General loss/lr
-            tblog.tb.writer.add_scalar("train/loss", float(loss.item()), step)
-            tblog.tb.writer.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
+            w.add_scalar("train/loss", float(loss.item()), step)
+            w.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
+
             # Gate metrics
             if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
                     m, f, e = gate_metrics(g)
-                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
-                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
-                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
+                    w.add_scalar(f"gates/block_{bi}_mean", m, step)
+                    w.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
+                    w.add_scalar(f"gates/block_{bi}_entropy", e, step)
+
             # Per-task breakdown
             mix_name = getattr(mixer, "last_name", None) or "unknown"
             tblog.tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
-            if isinstance(gates, (list,tuple)):
+            if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
-                    m, f, _ = enumerate(gate_metrics(g))
+                    m, f, _ = gate_metrics(g)  # <-- fixed
                     tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
                     tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
-                # expert diagnostics (if present)
+
+                # Expert diagnostics (if present)
                 for bi, bd in enumerate(aux.get("blocks", [])):
                     if isinstance(bd, dict) and "experts_pi_mean" in bd:
                         for j, v in enumerate(bd["experts_pi_mean"]):
-                            tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
+                            w.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
                     if isinstance(bd, dict) and "experts_pi_entropy" in bd:
-                        tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
+                        w.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
                     if isinstance(bd, dict) and "write_gate_mean" in bd:
-                        tblog.tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
-            tblog.tb.flush()
+                        w.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
+
+            w.flush()
 
         if step % log_every == 0:
             gmeans = [float(reduce_gate_tensor(g).mean().item()) for g in gates] if isinstance(gates, (list, tuple)) else []

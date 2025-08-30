@@ -100,7 +100,11 @@ class StickyMixtureSampler:
         self.last_name = self.base.names[self._idx]
         return self.base.gens[self._idx](batch)
 
-def build_mixer(tok, weights, hf_dataset="tatsu-lab/alpaca", hf_max_items=2000, sticky_chunk_steps: int | None = None):
+def build_mixer(tok,
+                weights,
+                hf_dataset="tatsu-lab/alpaca",
+                hf_max_items=2000,
+                sticky_chunk_steps: int | None = None):
     mx = int(getattr(tok, "model_max_length", 256) or 256)
     pad_id = getattr(tok, "pad_token_id", 0) or 0
     gens, wts, names = [], [], []

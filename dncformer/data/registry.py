@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, List
 import random, torch
-from .mix import MixtureSampler, StickyMixtureSampler, build_mixer
+from .mix import MixtureSampler, StickyMixtureSampler
 from .synthetic import make_copy_task, make_repeat_copy, make_n_back
 from .hf import hf_instruction_loader, make_hf_batch
 from ..config import CFG
@@ -90,19 +90,15 @@ def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
         sticky_mix: 200
         tasks:
           - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca, weight: 0.25, max_items: 4000 }
-          - { name: code, type: hf, dataset: bigcode/some-corpus, weight: 0.25, max_items: 4000, text_key: code }
-          - { name: copy, type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }
-          - { name: nback, type: synth, weight: 0.30, params: { T: 128, n: 5, vocab: 100 } }
+          - { name: code,   type: hf, dataset: some/code-corpus,  weight: 0.25, max_items: 4000, text_key: code }
+          - { name: copy,   type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }
+          - { name: nback,  type: synth, weight: 0.30, params: { T: 128, n: 5, vocab: 100 } }
     """
     tasks = data_cfg.get("tasks", []) or []
     sticky = int(data_cfg.get("sticky_mix", getattr(CFG,"sticky_mix", 0)) or 0)
 
     if not tasks:
-        # fallback: the legacy 4-slot builder
-        return build_mixer(tok,
-                           tuple(getattr(CFG,"mixture",(0.4,0.2,0.2,0.2))),
-                           hf_dataset=getattr(CFG,"hf_dataset","tatsu-lab/alpaca"),
-                           hf_max_items=int(getattr(CFG,"hf_max_items", 5000)))
+        raise ValueError("[registry] data.tasks is empty; provide at least one task in the YAML config.")
 
     mx = int(getattr(tok, "model_max_length", 256) or 256)
     pad_id = int(getattr(tok, "pad_token_id", 0) or 0)
@@ -113,6 +109,7 @@ def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
         name   = t.get("name", ttype)
         weight = float(t.get("weight", 1.0))
         params = t.get("params", {}) or {}
+
         if ttype == "synth":
             kind = (t.get("kind") or name).lower()
             if kind in ("copy",):
@@ -129,6 +126,7 @@ def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
                 gens.append(gen_nb); weights.append(weight); names.append(name)
             else:
                 print(f"[registry] unknown synth kind '{kind}' → skipping '{name}'")
+
         elif ttype == "hf":
             dataset   = t.get("dataset", None)
             max_items = int(t.get("max_items", data_cfg.get("hf_max_items", getattr(CFG,"hf_max_items", 5000))))
@@ -136,16 +134,17 @@ def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
             gen = _build_hf_gen(tok, dataset, mx, pad_id, max_items, text_key=text_key)
             if gen is not None:
                 gens.append(gen); weights.append(weight); names.append(name)
+            else:
+                print(f"[registry] skipped HF task '{name}' (dataset='{dataset}') due to load/tokenize failure.")
+
         else:
             print(f"[registry] unknown task type '{ttype}' → skipping '{name}'")
 
     if not gens:
-        print("[registry] no usable tasks; falling back to legacy 4-slot mixture.")
-        return build_mixer(tok,
-                           tuple(getattr(CFG,"mixture",(0.4,0.2,0.2,0.2))),
-                           hf_dataset=getattr(CFG,"hf_dataset","tatsu-lab/alpaca"),
-                           hf_max_items=int(getattr(CFG,"hf_max_items", 5000)))
-
+        raise ValueError(
+            "[registry] No usable tasks were constructed from YAML. "
+            "Please verify your 'data:' section (types, datasets, params, etc.)."
+        )
     weights = _normalize_weights(weights)
     if sticky > 1:
         base = MixtureSampler(gens, weights, names=names)

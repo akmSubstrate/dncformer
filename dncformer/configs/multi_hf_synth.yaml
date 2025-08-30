@@ -20,9 +20,7 @@ block_memdrop_prob: 0.0
 cross_block_balance_lambda: 0.0
 
 data:
-  # either use sticky_mix to chunk by steps...
   sticky_mix: 10
-  # ...or keep 0 and control chunking via an explicit mixture_schedule (optional)
   tasks:
     - name: alpaca
       type: hf
@@ -31,10 +29,9 @@ data:
       max_items: 4000
     - name: tinystories
       type: hf
-      dataset: ronneldan/TinyStories
+      dataset: roneneldan/TinyStories
       weight: 0.25
       max_items: 4000
-      # text_key: text   # (optional) if the split uses an unusual field
     - name: copy
       type: synth
       weight: 0.20

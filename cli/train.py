@@ -26,8 +26,26 @@ def main():
     p.add_argument("--label", type=str, default=None)
     args = p.parse_args()
 
-    cfg = load_yaml_cfg(args.config)
+    cfg_dict = load_yaml_cfg(args.config)
+    if isinstance(cfg_dict, dict):
+        for k, v in cfg_dict.items():
+            setattr(CFG, k, v)
+
     _apply_overrides_from_cli(args)
+
+    # Hard‑fail early if loader pipeline isn’t configured
+    if not (isinstance(getattr(CFG, "data", None), dict) and (CFG.data.get("tasks") or [])):
+        raise ValueError(
+            "CFG.data.tasks is missing or empty. The 0.3.x trainer requires a YAML with a 'data:' section.\n"
+            "Example:\n"
+            "  data:\n"
+            "    sticky_mix: 10\n"
+            "    tasks:\n"
+            "      - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca, weight: 0.25, max_items: 4000 }\n"
+            "      - { name: tinystories, type: hf, dataset: roneneldan/TinyStories, weight: 0.25, max_items: 4000 }\n"
+            "      - { name: copy, type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }\n"
+            "      - { name: nback, type: synth, weight: 0.30, params: { T: 128, n: 5, vocab: 100 } }\n"
+        )
 
     # seeding
     seed = int(getattr(CFG, "seed", 1337))
