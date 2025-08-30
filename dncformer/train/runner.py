@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from .loop import lm_shift_labels
 from ..config import CFG
-from ..log.tb import TB_AVAILABLE, start_tb_run, tb
+from ..log import tb as tblog
 from ..model.head import DNCFormerHead
 from ..utils.env import choose_amp_dtype, report_cuda, sdpa_ctx
 from ..utils.helpers import reduce_gate_tensor, gate_metrics
@@ -116,9 +116,9 @@ def train_runner(
 
     # TB run
     run_name = label or time.strftime("dncformer-%Y%m%d-%H%M%S")
-    start_tb_run(run_name)
-    if tb and tb.writer:
-        tb.add_text("run/config", json.dumps({
+    tblog.start_tb_run(run_name)
+    if tblog.tb and tblog.tb.writer:
+        tblog.tb.add_text("run/config", json.dumps({
             "steps": steps, "batch_size": batch_size, "warmup_steps": warmup_steps,
             "mixture": list(mixture), "chunk_len": int(chunk_len),
             "hf_dataset": hf_dataset, "hf_max_items": hf_max_items,
@@ -167,39 +167,39 @@ def train_runner(
 
         sch.step()
 
-        if step % log_every == 0 and tb and tb.writer:
+        if step % log_every == 0 and tblog.tb and tblog.tb.writer:
             # General loss/lr
-            tb.writer.add_scalar("train/loss", float(loss.item()), step)
-            tb.writer.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
+            tblog.tb.writer.add_scalar("train/loss", float(loss.item()), step)
+            tblog.tb.writer.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
             # Gate metrics
             if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
                     m, f, e = gate_metrics(g)
-                    tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
-                    tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
-                    tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
             # Per-task breakdown
             mix_name = getattr(mixer, "last_name", None) or "unknown"
-            tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
+            tblog.tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
             if isinstance(gates, (list,tuple)):
                 for bi, g in enumerate(gates):
                     m, f, _ = enumerate(gate_metrics(g))
-                    tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
-                    tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
+                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
+                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
                 # expert diagnostics (if present)
                 for bi, bd in enumerate(aux.get("blocks", [])):
                     if isinstance(bd, dict) and "experts_pi_mean" in bd:
                         for j, v in enumerate(bd["experts_pi_mean"]):
-                            tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
+                            tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
                     if isinstance(bd, dict) and "experts_pi_entropy" in bd:
-                        tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
+                        tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
                     if isinstance(bd, dict) and "write_gate_mean" in bd:
-                        tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
-            tb.flush()
+                        tblog.tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
+            tblog.tb.flush()
 
         if step % log_every == 0:
             gmeans = [float(reduce_gate_tensor(g).mean().item()) for g in gates] if isinstance(gates, (list, tuple)) else []
             print(f"step {step} | loss {loss.item():.4f} | lr {sch.get_last_lr()[0]:.2e} | gates={gmeans} | mix={getattr(mixer,'last_name','?')}")
 
-    if tb and tb.writer: tb.flush()
+    if tblog and tblog.tb.writer: tblog.tb.flush()
     return head, tok

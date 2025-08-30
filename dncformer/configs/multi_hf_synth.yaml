@@ -21,7 +21,7 @@ cross_block_balance_lambda: 0.0
 
 data:
   # either use sticky_mix to chunk by steps...
-  sticky_mix: 200
+  sticky_mix: 10
   # ...or keep 0 and control chunking via an explicit mixture_schedule (optional)
   tasks:
     - name: alpaca
