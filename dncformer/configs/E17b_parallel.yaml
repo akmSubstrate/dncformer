@@ -1,0 +1,38 @@
+label: E17b_parallel
+seed: 1337
+
+# model
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+n_blocks: 1
+mem_experts: 2
+per_block_cfg: null
+
+# anti-collapse (parallel)
+router_balance_lambda: 0.003
+router_noise_std: 0.05
+expert_dropout_p: 0.05
+block_memdrop_prob: 0.0
+cross_block_balance_lambda: 0.0
+
+# LoRA
+lora_enable: true
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules: ["q_proj","k_proj","v_proj","o_proj","fc1","fc2","wq","wk","wv","wo","gate_proj","up_proj","down_proj"]
+
+# train
+precision: bf16
+device: cuda
+train_steps: 1000
+batch_size: 8
+warmup_steps: 50
+lr: 2.0e-4
+weight_decay: 0.01
+lr_min_ratio: 0.10
+
+# data
+mixture: [0.0, 0.34, 0.33, 0.33]   # memory-only warm-start
+hf_dataset: null
+hf_max_items: 0
+sticky_mix: 200                     # chunk length
