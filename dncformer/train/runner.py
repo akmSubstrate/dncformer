@@ -6,12 +6,14 @@ import json, math, time, contextlib
 import torch, torch.nn as nn
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
+from .loop import lm_shift_labels
 from ..config import CFG
 from ..log.tb import TB_AVAILABLE, start_tb_run, tb
 from ..model.head import DNCFormerHead
 from ..utils.env import choose_amp_dtype, report_cuda, sdpa_ctx
 from ..utils.helpers import reduce_gate_tensor, gate_metrics
-from ..data.registry import build_mixed_sampler
+from ..data.mix import build_mixer
+from dncformer.data.registry import build_sampler_from_cfg
 
 def _maybe_apply_lora(base: nn.Module):
     if not bool(getattr(CFG, "lora_enable", False)):
@@ -95,9 +97,22 @@ def train_runner(
     opt = _make_optimizer(head)
     sch = WarmupCosine(opt, warmup_steps=warmup_steps, total_steps=steps, min_lr_ratio=min_lr_ratio)
 
-    mixer = build_mixed_sampler(tok, mixture, chunk_len=chunk_len, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+    try:
+        data_cfg = getattr(CFG, "data", None)
+    except Exception:
+        data_cfg = None
+
+    if isinstance(data_cfg, dict) and data_cfg.get("tasks"):
+        mixer = build_sampler_from_cfg(tok, data_cfg)
+    else:
+        # legacy 4-slot fallback
+        mixer = build_mixer(tok, mixture, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
+
     amp_dtype = choose_amp_dtype(getattr(CFG, "precision", "bf16"))
-    scaler = torch.amp.GradScaler('cuda', enabled=(amp_dtype in (torch.float16, torch.bfloat16)))
+    device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
+    use_autocast = (device_type == 'cuda' and amp_dtype != torch.float32)
+    use_scaler = (device_type == 'cuda' and amp_dtype == torch.float16)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_scaler)
 
     # TB run
     run_name = label or time.strftime("dncformer-%Y%m%d-%H%M%S")
@@ -112,14 +127,17 @@ def train_runner(
     head.train()
     for step in range(1, steps+1):
         ids = mixer(batch_size).to(next(head.parameters()).device)
-        with torch.autocast('cuda', dtype=amp_dtype, enabled=(amp_dtype != torch.float32)):
-            logits, gates, aux = head.forward(ids, gate_override=getattr(CFG, "force_g", None))
+        with torch.amp.autocast(
+                device_type=device_type,
+                dtype=amp_dtype if device_type == 'cuda' else torch.float32,
+                enabled=use_autocast
+        ):
+            logits, gates, aux = head.forward(
+                ids,
+                gate_override=getattr(CFG, "force_g", None),
+            )
             # standard LM loss
-            labels = ids[:, 1:].contiguous()
-            pred   = logits[:, :-1, :].contiguous()
-            loss = torch.nn.functional.cross_entropy(pred.reshape(-1, pred.size(-1)),
-                                                     labels.reshape(-1),
-                                                     ignore_index=tok.pad_token_id)
+            loss = lm_shift_labels(ids, logits, tok)
 
             # A1: soft expert balance (parallel only)
             lam = float(getattr(CFG, "router_balance_lambda", 0.0))
@@ -138,28 +156,34 @@ def train_runner(
                     wm = [float(x) for x in wm if isinstance(x, (float,int))]
                     if wm: loss = loss + lam_w * (sum(wm)/len(wm))
 
-        if amp_dtype in (torch.float16, torch.bfloat16):
+        if use_scaler:
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), getattr(CFG, "grad_clip", 1.0))
+            torch.nn.utils.clip_grad_norm_(head.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
             scaler.step(opt); scaler.update(); opt.zero_grad(set_to_none=True)
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), getattr(CFG, "grad_clip", 1.0))
+            torch.nn.utils.clip_grad_norm_(head.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
             opt.step(); opt.zero_grad(set_to_none=True)
 
         sch.step()
 
         if step % log_every == 0 and tb and tb.writer:
+            # General loss/lr
             tb.writer.add_scalar("train/loss", float(loss.item()), step)
             tb.writer.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
+            # Gate metrics
             if isinstance(gates, (list, tuple)):
-                mix_name = getattr(mixer, "last_name", None) or "unknown"
-                tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
                 for bi, g in enumerate(gates):
                     m, f, e = gate_metrics(g)
                     tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
                     tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
                     tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
+            # Per-task breakdown
+            mix_name = getattr(mixer, "last_name", None) or "unknown"
+            tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
+            if isinstance(gates, (list,tuple)):
+                for bi, g in enumerate(gates):
+                    m, f, _ = enumerate(gate_metrics(g))
                     tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
                     tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
                 # expert diagnostics (if present)

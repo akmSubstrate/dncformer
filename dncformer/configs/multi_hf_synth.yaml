@@ -1,0 +1,45 @@
+seed: 2027
+label: e17e18b_multi_hf
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+precision: bf16
+lora_enable: true
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+batch_size: 8
+train_steps: 1000
+warmup_steps: 50
+lr: 2.0e-4
+weight_decay: 0.01
+
+# anti-collapse parameters
+router_balance_lambda: 3.0e-3
+router_noise_std: 0.03
+expert_dropout_p: 0.02
+block_memdrop_prob: 0.0
+cross_block_balance_lambda: 0.0
+
+data:
+  # either use sticky_mix to chunk by steps...
+  sticky_mix: 200
+  # ...or keep 0 and control chunking via an explicit mixture_schedule (optional)
+  tasks:
+    - name: alpaca
+      type: hf
+      dataset: tatsu-lab/alpaca
+      weight: 0.25
+      max_items: 4000
+    - name: tinystories
+      type: hf
+      dataset: ronneldan/TinyStories
+      weight: 0.25
+      max_items: 4000
+      # text_key: text   # (optional) if the split uses an unusual field
+    - name: copy
+      type: synth
+      weight: 0.20
+      params: { T: 128, vocab: 200 }
+    - name: nback
+      type: synth
+      weight: 0.30
+      params: { T: 128, n: 5, vocab: 100 }

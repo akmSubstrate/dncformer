@@ -1,0 +1,25 @@
+# minimal smoke config (no HF, no LoRA)
+seed: 1337
+label: smoke_runner_synth
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+precision: bf16
+lora_enable: false
+batch_size: 2
+train_steps: 4
+warmup_steps: 2
+
+data:
+  sticky_mix: 2            # stick to one task for 2 steps (visible in logs)
+  tasks:
+    - name: copy
+      type: synth
+      weight: 0.34
+      params: { T: 64, vocab: 100 }
+    - name: repeat
+      type: synth
+      weight: 0.33
+      params: { T: 64, vocab: 100 }
+    - name: nback
+      type: synth
+      weight: 0.33
+      params: { T: 64, n: 5, vocab: 50 }
