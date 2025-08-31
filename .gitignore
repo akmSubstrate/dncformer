@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.python-version
+.venv/
+venv/
+env/
+ENV/
+
+# Build / packaging / coverage
+build/
+dist/
+htmlcov/
+.tox/
+.coverage
+*.cover
+*.log
+*.tmp
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# IDEs / OS
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Checkpoints / artifacts
+runs/
+checkpoints/
+output/
+artifacts/
+wandb/
+events.out.tfevents*
+*.pt
+*.bin
+*.safetensors
+
+# Data
+data/
+datasets/
+.cache/huggingface/
+~/.cache/huggingface/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Local configs
+*.local.yaml
+*.secrets.yaml
