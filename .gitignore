@@ -31,7 +31,7 @@ htmlcov/
 Thumbs.db
 
 # Checkpoints / artifacts
-runs/
+runs/*
 checkpoints/
 output/
 artifacts/
@@ -42,7 +42,6 @@ events.out.tfevents*
 *.safetensors
 
 # Data
-data/
 datasets/
 .cache/huggingface/
 ~/.cache/huggingface/

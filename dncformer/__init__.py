@@ -1,36 +1,37 @@
-# dncformer/__init__.py
-from .config import CFG, DNCFormerConfig, load_config_yaml, cfg_to_dict
-from .train.loop import (
-    train_experiment, evaluate_haystack, build_model_and_tokenizer,
-    load_base_model, lm_shift_labels
-)
-from .log.tb import (
-    TB_AVAILABLE, tb_available, tb_analyzer_available,
-    start_tb_run, TBLogger, tb  # tb is module-level global writer (optional)
-)
+# prior (0.2.x) exposed many legacy surfaces, including train_experiment, experiments, etc.
+# new (0.3.x) keeps a minimal, forward-looking API.
 
-# Common data helpers
-from .data.mix import MixtureSampler, build_mixer
-from .data.synthetic import make_copy_task, make_repeat_copy, make_n_back, make_haystack_batch
-from .data.hf import hf_instruction_loader, make_hf_batch, format_instruction
+# NEW — v0.3.x
+from .config import CFG
+from .utils.yaml_utils import load_yaml_cfg
 
-# Experiments (optional surface)
-from .experiments.e15e16 import (
-    set_e11b_baseline,
-    set_e15a_write_sparse_light, set_e15b_two_experts_smallW,
-    set_e16a, set_e16b, run_e16_once, run_e16_sweep
-)
+# Training (runner-based, replaces train_experiment)
+from .train.runner import train_runner, build_model_and_tokenizer
+
+# Logging
+from .log.tb import start_tb_run, TBLogger, tb
+
+# Data entry points (compose samplers from YAML; also export a few built-in generators)
+from .data.registry import build_sampler_from_cfg
+from .data.synthetic import make_copy_task, make_repeat_copy, make_n_back
 
 __all__ = [
-    "CFG", "DNCFormerConfig", "load_config_yaml", "cfg_to_dict",
-    "train_experiment", "evaluate_haystack", "build_model_and_tokenizer",
-    "load_base_model", "lm_shift_labels",
-    "TB_AVAILABLE", "tb_available", "tb_analyzer_available",
-    "start_tb_run", "TBLogger", "tb",
-    "MixtureSampler", "build_mixer",
-    "make_copy_task", "make_repeat_copy", "make_n_back", "make_haystack_batch",
-    "hf_instruction_loader", "make_hf_batch", "format_instruction",
-    "set_e11b_baseline",
-    "set_e15a_write_sparse_light", "set_e15b_two_experts_smallW",
-    "set_e16a", "set_e16b", "run_e16_once", "run_e16_sweep",
+    "CFG",
+    "load_yaml_cfg",
+    "train_runner",
+    "build_model_and_tokenizer",
+    "start_tb_run",
+    "TBLogger",
+    "tb",
+    "build_sampler_from_cfg",
+    "make_copy_task",
+    "make_repeat_copy",
+    "make_n_back",
 ]
+
+# Optional: loud deprecation helpers (uncomment if you want explicit runtime errors on old imports)
+# def train_experiment(*args, **kwargs):
+#     raise RuntimeError(
+#         "train_experiment has been removed in v0.3.x. "
+#         "Use `dncformer.train.runner.train_runner` and a YAML config instead."
+#     )
