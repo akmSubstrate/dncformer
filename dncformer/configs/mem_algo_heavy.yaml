@@ -1,0 +1,24 @@
+seed: 1337
+label: mem_algo_probe
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+precision: bf16
+lora_enable: false
+
+batch_size: 8
+train_steps: 600
+warmup_steps: 30
+lr: 2.0e-4
+weight_decay: 0.01
+
+router_balance_lambda: 3.0e-3
+router_noise_std: 0.03
+expert_dropout_p: 0.02
+block_memdrop_prob: 0.0
+cross_block_balance_lambda: 0.0
+
+data:
+  sticky_mix: 100
+  tasks:
+    - { name: dyck,  type: synth, kind: dyck,       weight: 0.40, params: { depth: 5, T: 96 } }
+    - { name: stack, type: synth, kind: stack_ops,  weight: 0.30, params: { ops: 28 } }
+    - { name: sort,  type: synth, kind: sort_list,  weight: 0.30, params: { length: 16, vocab: 200 } }

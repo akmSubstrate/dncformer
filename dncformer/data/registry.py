@@ -1,9 +1,16 @@
 from __future__ import annotations
 from typing import Any, Dict, List
 import random, torch
+
 from .mix import MixtureSampler, StickyMixtureSampler
 from .synthetic import make_copy_task, make_repeat_copy, make_n_back
 from .hf import hf_instruction_loader, make_hf_batch
+
+from .tasks_code import make_mbpp_gen, make_apps_gen
+from .tasks_math import make_gsm8k_gen, make_aqua_rat_gen
+from .tasks_logic import make_clutrr_gen # depreciated: make_logiqa_gen, make_wikihop_gen
+from .tasks_algo import make_dyck_gen, make_stack_ops_gen, make_sort_list_gen
+
 from ..config import CFG
 
 def _normalize_weights(ws: List[float]) -> List[float]:
@@ -85,20 +92,27 @@ def _build_hf_gen(tok, dataset: str, mx: int, pad_id: int, max_items: int, text_
 
 def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
     """
-    Build a sampler from YAML:
+    YAML-driven sampler - example
       data:
         sticky_mix: 200
         tasks:
-          - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca, weight: 0.25, max_items: 4000 }
-          - { name: code,   type: hf, dataset: some/code-corpus,  weight: 0.25, max_items: 4000, text_key: code }
-          - { name: copy,   type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }
-          - { name: nback,  type: synth, weight: 0.30, params: { T: 128, n: 5, vocab: 100 } }
+          - { name: mbpp,   type: hf,  dataset: mbpp,                 weight: 0.25, max_items: 4000 }
+          - { name: apps,   type: hf,  dataset: codeparrot/apps,      weight: 0.25, max_items: 2000 }
+          - { name: gsm8k,  type: hf,  dataset: gsm8k,                weight: 0.25 }
+          - { name: aqua,   type: hf,  dataset: aqua_rat,             weight: 0.25 }
+          - { name: babi3,  type: hf,  dataset: babi,                 weight: 0.25, params: { task_id: 3 } }
+          - { name: clutrr, type: hf,  dataset: clutrr,               weight: 0.25 }
+          - { name: dyck,   type: synth, kind: dyck,                  weight: 0.20, params: { depth: 4, T: 80 } }
+          - { name: stack,  type: synth, kind: stack_ops,             weight: 0.20, params: { ops: 24 } }
+          - { name: sort,   type: synth, kind: sort_list,             weight: 0.20, params: { length: 12, vocab: 100 } }
+          - { name: copy,   type: synth, kind: copy,                  weight: 0.10, params: { T: 128, vocab: 200 } }
+          - { name: nback,  type: synth, kind: nback,                 weight: 0.10, params: { T: 128, n: 5, vocab: 100 } }
     """
     tasks = data_cfg.get("tasks", []) or []
-    sticky = int(data_cfg.get("sticky_mix", getattr(CFG,"sticky_mix", 0)) or 0)
+    sticky = int(data_cfg.get("sticky_mix", getattr(CFG, "sticky_mix", 0)) or 0)
 
     if not tasks:
-        raise ValueError("[registry] data.tasks is empty; provide at least one task in the YAML config.")
+        raise ValueError("CFG.data.tasks is missing or empty. Provide tasks in your YAML config.")
 
     mx = int(getattr(tok, "model_max_length", 256) or 256)
     pad_id = int(getattr(tok, "pad_token_id", 0) or 0)
@@ -109,44 +123,86 @@ def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
         name   = t.get("name", ttype)
         weight = float(t.get("weight", 1.0))
         params = t.get("params", {}) or {}
+        max_items = int(t.get("max_items", data_cfg.get("hf_max_items", getattr(CFG, "hf_max_items", 5000))))
 
-        if ttype == "synth":
+        if ttype == "logic":
             kind = (t.get("kind") or name).lower()
+            raise ValueError(
+                f"[registry] 'type: logic' is reserved; please use 'type: hf' and dataset 'clutrr' for CLUTRR.\n"
+                f"Offending task: '{name}' (kind='{kind}')."
+            )
+
+        # ALGORITHMIC TASKS
+        elif ttype == "synth":
+            kind = (t.get("kind") or name).lower()
+            # COPY
             if kind in ("copy",):
                 T = int(params.get("T", min(mx, 128))); vocab = int(params.get("vocab", 100))
-                def gen_copy(b, _T=T, _V=vocab): return make_copy_task(b, T=_T, vocab=_V)
+                def gen_copy(b, _T=T, _V=vocab): return make_copy_task(b, T=_T, vocab=_V)  # from synthetic
                 gens.append(gen_copy); weights.append(weight); names.append(name)
+            # REPEAT
             elif kind in ("repeat","repeat_copy"):
                 T = int(params.get("T", min(mx, 128))); vocab = int(params.get("vocab", 100))
-                def gen_rep(b, _T=T, _V=vocab, _pad=pad_id): return make_repeat_copy(b, T=_T, vocab=_V, pad_id=_pad, device="cpu")
+                def gen_rep(b, _T=T, _V=vocab):
+                    from .synthetic import make_repeat_copy
+                    return make_repeat_copy(b, T=_T, vocab=_V, pad_id=pad_id, device="cpu")
                 gens.append(gen_rep); weights.append(weight); names.append(name)
+            # N-BACK
             elif kind in ("nback","n_back","n-back"):
                 T = int(params.get("T", min(mx, 128))); n = int(params.get("n", 5)); vocab = int(params.get("vocab", 50))
-                def gen_nb(b, _T=T, _n=n, _V=vocab): return make_n_back(b, T=_T, n=_n, vocab=_V)
+                def gen_nb(b, _T=T, _n=n, _V=vocab): return make_n_back(b, T=_T, n=_n, vocab=_V)  # from synthetic
                 gens.append(gen_nb); weights.append(weight); names.append(name)
+            # DYCK
+            elif kind in ("dyck",):
+                depth = int(params.get("depth", 4)); T = int(params.get("T", 80))
+                gens.append( make_dyck_gen(tok, max_len=mx, pad_id=pad_id, depth=depth, T=T) ); weights.append(weight); names.append(name)  # tasks_algo
+            # STACK
+            elif kind in ("stack_ops","stack","stackops"):
+                ops = int(params.get("ops", 24))
+                gens.append( make_stack_ops_gen(tok, max_len=mx, pad_id=pad_id, ops=ops) ); weights.append(weight); names.append(name)  # tasks_algo
+            # SORT
+            elif kind in ("sort_list","sort"):
+                length = int(params.get("length", 12)); vocab = int(params.get("vocab", 100))
+                gens.append( make_sort_list_gen(tok, max_len=mx, pad_id=pad_id, length=length, vocab=vocab) ); weights.append(weight); names.append(name)  # tasks_algo
             else:
-                print(f"[registry] unknown synth kind '{kind}' → skipping '{name}'")
+                raise ValueError(f"[registry] unknown synth kind '{kind}' in task '{name}'")
 
         elif ttype == "hf":
-            dataset   = t.get("dataset", None)
-            max_items = int(t.get("max_items", data_cfg.get("hf_max_items", getattr(CFG,"hf_max_items", 5000))))
-            text_key  = t.get("text_key", None)
-            gen = _build_hf_gen(tok, dataset, mx, pad_id, max_items, text_key=text_key)
-            if gen is not None:
+            dataset = (t.get("dataset") or "").lower()
+            # CODE
+            if dataset in ("mbpp","google-research-datasets/mbpp"):
+                gen = make_mbpp_gen(tok, max_len=mx, pad_id=pad_id, max_items=max_items)
+                gens.append(gen); weights.append(weight); names.append(name)
+            elif "codeparrot/apps" in dataset or dataset.endswith("/apps") or dataset == "apps":
+                gen = make_apps_gen(tok, max_len=mx, pad_id=pad_id, max_items=max_items)
+                gens.append(gen); weights.append(weight); names.append(name)
+            # MATH
+            elif dataset == "gsm8k":
+                gen = make_gsm8k_gen(tok, max_len=mx, pad_id=pad_id, split=t.get("split","train"), max_items=max_items)
+                gens.append(gen); weights.append(weight); names.append(name)
+            elif dataset in ("aqua_rat","aqua"):
+                gen = make_aqua_rat_gen(tok, max_len=mx, pad_id=pad_id, split=t.get("split","train"), max_items=max_items)
+                gens.append(gen); weights.append(weight); names.append(name)
+            # LOGIC (CLUTRR only)
+            elif dataset in ("clutrr","facebook/clutrr"):
+                gen = make_clutrr_gen(tok, max_len=mx, pad_id=pad_id, split=t.get("split","train"), max_items=max_items)
                 gens.append(gen); weights.append(weight); names.append(name)
             else:
-                print(f"[registry] skipped HF task '{name}' (dataset='{dataset}') due to load/tokenize failure.")
+                # Generic text fallback for explicitly HF tasks, mostly for future expansion/quick testing
+                from .hf import build_generic_text_batcher
+                gen = build_generic_text_batcher(tok, dataset, max_len=mx, pad_id=pad_id, max_items=max_items)
+                if gen:
+                    gens.append(gen); weights.append(weight); names.append(name)
+                else:
+                    raise ValueError(f"[registry] HF dataset '{dataset}' unsupported or returned 0 samples (task '{name}').")
 
         else:
-            print(f"[registry] unknown task type '{ttype}' → skipping '{name}'")
+            raise ValueError(f"[registry] unknown task type '{ttype}' in task '{name}'")
 
     if not gens:
-        raise ValueError(
-            "[registry] No usable tasks were constructed from YAML. "
-            "Please verify your 'data:' section (types, datasets, params, etc.)."
-        )
+        raise RuntimeError("[registry] no usable tasks from YAML. Aborting.")
+
     weights = _normalize_weights(weights)
-    if sticky > 1:
-        base = MixtureSampler(gens, weights, names=names)
-        return StickyMixtureSampler(base, chunk_steps=sticky, reset_on_set_weights=False)
-    return MixtureSampler(gens, weights, names=names)
+    base = MixtureSampler(gens, weights, names=names)
+    sticky = int(data_cfg.get("sticky_mix", getattr(CFG, "sticky_mix", 0)) or 0)
+    return StickyMixtureSampler(base, chunk_steps=sticky, reset_on_set_weights=False) if sticky > 1 else base

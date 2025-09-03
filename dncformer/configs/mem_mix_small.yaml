@@ -1,0 +1,41 @@
+seed: 2027
+label: mem_mix_small
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+precision: bf16
+lora_enable: true
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+batch_size: 8
+train_steps: 1000
+warmup_steps: 50
+lr: 2.0e-4
+weight_decay: 0.01
+
+# collapse mitigation
+router_balance_lambda: 3.0e-3
+router_noise_std: 0.03
+expert_dropout_p: 0.02
+block_memdrop_prob: 0.0
+cross_block_balance_lambda: 0.0
+
+data:
+  sticky_mix: 50
+  tasks:
+    # Code (2)
+    - { name: mbpp,  type: hf, dataset: mbpp,             weight: 0.15, max_items: 4000 }
+    - { name: apps,  type: hf, dataset: codeparrot/apps,  weight: 0.10, max_items: 2000 }
+
+    # Math (2)
+    - { name: gsm8k, type: hf, dataset: gsm8k,            weight: 0.20 }
+    - { name: aqua,  type: hf, dataset: aqua_rat,         weight: 0.15 }
+
+    # Logic (2)
+    - { name: babi3, type: hf, dataset: babi,             weight: 0.10, params: { task_id: 3 } }
+    - { name: clutrr,type: hf, dataset: clutrr,           weight: 0.10 }
+
+    # Algorithmic (3)
+    - { name: dyck,  type: synth, kind: dyck,             weight: 0.10, params: { depth: 4, T: 80 } }
+    - { name: stack, type: synth, kind: stack_ops,        weight: 0.05,  params: { ops: 24 } }
+    - { name: sort,  type: synth, kind: sort_list,        weight: 0.05,  params: { length: 12, vocab: 100 } }

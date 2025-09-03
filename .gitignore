@@ -22,6 +22,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .cache/
+tests/
 
 # IDEs / OS
 .vscode/
@@ -55,3 +56,5 @@ datasets/
 
 # misc
 *.docx
+scratchpad.md
+

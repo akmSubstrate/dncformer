@@ -1,0 +1,31 @@
+# configs/logic_quick.yaml
+seed: 2027
+label: logic_quick
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+precision: bf16
+lora_enable: true
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+batch_size: 8
+train_steps: 200
+warmup_steps: 20
+lr: 2.0e-4
+weight_decay: 0.01
+
+data:
+  sticky_mix: 10
+  tasks:
+    - name: logiqa
+      type: logic
+      kind: logiqa
+      weight: 0.6
+      max_items: 2000
+      params: { split: "train" }
+    - name: wikihop
+      type: logic
+      kind: wikihop
+      weight: 0.4
+      max_items: 2000
+      params: { split: "train", filtered: true }

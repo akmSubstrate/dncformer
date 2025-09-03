@@ -1,0 +1,71 @@
+# dncformer/configs/smoke_v033.yaml
+seed: 1337
+label: smoke_v033
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+precision: bf16
+lora_enable: false
+
+batch_size: 4
+train_steps: 60
+warmup_steps: 10
+lr: 2.0e-4
+weight_decay: 0.01
+
+# gentle anti-collapse defaults
+router_balance_lambda: 0.0
+router_noise_std: 0.0
+expert_dropout_p: 0.0
+block_memdrop_prob: 0.0
+cross_block_balance_lambda: 0.0
+
+data:
+  sticky_mix: 10
+  hf_max_items: 300
+  tasks:
+    # CODE
+    - name: mbpp
+      type: hf
+      dataset: mbpp
+      weight: 0.15
+      max_items: 300
+    - name: apps
+      type: hf
+      dataset: codeparrot/apps
+      weight: 0.15
+      max_items: 300
+
+    # MATH
+    - name: gsm8k
+      type: hf
+      dataset: gsm8k
+      weight: 0.15
+      max_items: 300
+    - name: aqua
+      type: hf
+      dataset: aqua_rat
+      weight: 0.15
+      max_items: 300
+
+    # LOGIC (CLUTRR only)
+    - name: clutrr
+      type: hf
+      dataset: clutrr
+      weight: 0.10
+      max_items: 300
+
+    # ALGO (synthetic)
+    - name: dyck
+      type: synth
+      kind: dyck
+      weight: 0.10
+      params: { depth: 3, T: 64 }
+    - name: stack
+      type: synth
+      kind: stack_ops
+      weight: 0.10
+      params: { ops: 16 }
+    - name: sort
+      type: synth
+      kind: sort_list
+      weight: 0.10
+      params: { length: 10, vocab: 50 }
