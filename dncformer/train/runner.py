@@ -6,7 +6,6 @@ import json, math, time, contextlib
 import torch, torch.nn as nn
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from .loop import lm_shift_labels
 from ..config import CFG
 from ..log import tb as tblog
 from ..model.head import DNCFormerHead
@@ -14,6 +13,20 @@ from ..utils.env import choose_amp_dtype, report_cuda, sdpa_ctx
 from ..utils.helpers import reduce_gate_tensor, gate_metrics
 from ..data.mix import StickyMixtureSampler
 from dncformer.data.registry import build_sampler_from_cfg
+
+def lm_shift_labels(inp_ids: torch.Tensor, logits: torch.Tensor, tok) -> torch.Tensor:
+    """
+    Standard LM next-token loss with one-token shift:
+      inputs:  x[ :, :-1]
+      labels:  x[ :,  1:]
+    """
+    labels = inp_ids[:, 1:].contiguous()
+    logits = logits[:, :-1].contiguous()
+    return nn.functional.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        labels.reshape(-1),
+        ignore_index=getattr(tok, "pad_token_id", 0)
+    )
 
 def _maybe_apply_lora(base: nn.Module):
     if not bool(getattr(CFG, "lora_enable", False)):

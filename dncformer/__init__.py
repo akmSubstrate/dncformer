@@ -1,7 +1,3 @@
-# prior (0.2.x) exposed many legacy surfaces, including train_experiment, experiments, etc.
-# new (0.3.x) keeps a minimal, forward-looking API.
-
-# NEW — v0.3.x
 from .config import CFG
 from .utils.yaml_utils import load_yaml_cfg
 
