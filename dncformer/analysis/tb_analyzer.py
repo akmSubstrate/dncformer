@@ -1,4 +1,3 @@
-# dncformer/analysis/tb_analyzer.py
 from __future__ import annotations
 
 import os, re, glob, json, argparse
@@ -30,7 +29,7 @@ except Exception:
         _TB_OK = False
 
 
-# ---------- version-agnostic size guidance ----------
+# version-agnostic size guidance
 def _size_guidance_version_safe() -> Dict:
     """
     Build size_guidance dict usable across TB versions (module constants or lowercase fallbacks).
@@ -46,7 +45,7 @@ def _size_guidance_version_safe() -> Dict:
     return sg
 
 
-# ---------- low-level readers ----------
+# low-level readers
 def _load_scalars_from_event_file(ev_path: str) -> Dict[str, List[Tuple[int, float]]]:
     """
     Load all scalar series from a single event file into: tag -> list[(step, value)].
@@ -107,7 +106,7 @@ def _detect_tasks_and_blocks(scalars: Dict[str, List[Tuple[int, float]]]) -> Tup
     return sorted(tasks), sorted(blocks)
 
 
-# ---------- small reducers ----------
+#  small reducers
 def _s_last(vals: List[Tuple[int, float]], k: Optional[int] = None) -> float:
     if not vals: return float("nan")
     arr = np.array([v for _, v in vals], dtype=float)
@@ -128,7 +127,7 @@ def _s_count(vals: List[Tuple[int, float]]) -> int:
     return len(vals) if vals else 0
 
 
-# ---------- label inference ----------
+# label inference
 def _decode_text_tensor(tensor_proto) -> Optional[str]:
     """
     Decode TB text payload from TensorEvent.tensor_proto. Works across TB builds.
@@ -201,7 +200,7 @@ def _infer_label_from_dirname(run_dir: Path) -> str:
     return m.group(1) if m else name
 
 
-# ---------- per-run summarizer ----------
+# per-run summarizer
 def summarize_run(run_dir: Path) -> Tuple[Dict, Dict[str, List[Tuple[int, float]]]]:
     """
     Build a single row summary for a run directory and return (summary, merged_scalars).
@@ -363,7 +362,7 @@ def analyze_runs(log_root: str, out_dir: str, run_glob: Optional[str] = None, ve
     cols = [c for c in front if c in df_runs.columns] + [c for c in df_runs.columns if c not in front]
     df_runs = df_runs[cols]
 
-    # ----- per‑task granular time series -----
+    # per‑task granular time series
     rows_ts: List[Dict] = []
     for run_name, (rd, scal) in all_scalars_by_run.items():
         label = _infer_label_from_text_tags(rd) or _infer_label_from_dirname(rd)
@@ -424,7 +423,7 @@ def analyze_runs(log_root: str, out_dir: str, run_glob: Optional[str] = None, ve
     return df_runs, df_task_ts
 
 
-# ---------- CLI ----------
+# CLI
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Analyze DNCFormer TensorBoard runs → CSV.")
     p.add_argument("--runs", default="./runs", help="Root directory containing TB run subdirs.")
