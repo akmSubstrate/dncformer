@@ -202,6 +202,19 @@ def build_sampler_from_cfg(tok, data_cfg: Dict[str, Any]):
     if not gens:
         raise RuntimeError("[registry] no usable tasks from YAML. Aborting.")
 
+    # Weight policy: 'auto' (default), 'uniform', or 'yaml'
+    policy = str(data_cfg.get("weight_policy", "auto")).lower().strip()
+    # detect whether user explicitly supplied any weight in YAML
+    had_yaml_weights = any(("weight" in (t or {})) for t in tasks)
+
+    if policy == "uniform" or (policy == "auto" and not had_yaml_weights):
+        # Force equal weighting across all constructed generators
+        weights = [1.0] * len(gens)
+    # else: keep 'weights' list collected from YAML
+    #       assigned earlier for tasks that omitted 'weight') and normalize below
+    weights = _normalize_weights(weights)
+
+    # --- Wrap with sticky chunking if requested ---
     weights = _normalize_weights(weights)
     base = MixtureSampler(gens, weights, names=names)
     sticky = int(data_cfg.get("sticky_mix", getattr(CFG, "sticky_mix", 0)) or 0)

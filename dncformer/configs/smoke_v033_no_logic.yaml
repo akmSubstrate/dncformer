@@ -19,46 +19,18 @@ block_memdrop_prob: 0.0
 cross_block_balance_lambda: 0.0
 
 data:
+  weight_policy: uniform
   sticky_mix: 10
   hf_max_items: 400
   tasks:
     # code
-    - name: mbpp
-      type: hf
-      dataset: mbpp
-      weight: 0.25
-      max_items: 400
-    - name: apps
-      type: hf
-      dataset: codeparrot/apps
-      weight: 0.25
-      max_items: 400
-
+    - { name: mbpp, type: hf, dataset: mbpp, max_items: 400 }
+    - { name: apps, type: hf, dataset: codeparrot/apps, max_items: 400 }
     # math
-    - name: gsm8k
-      type: hf
-      dataset: gsm8k
-      weight: 0.25
-      max_items: 400
-    - name: aqua
-      type: hf
-      dataset: aqua_rat
-      weight: 0.15
-      max_items: 400
+    - { name: gsm8k, type: hf, dataset: gsm8k, max_items: 400 }
+    - { name: aqua, type: hf, dataset: aqua_rat, max_items: 400 }
 
     # algorithmic (synthetic)
-    - name: dyck
-      type: synth
-      kind: dyck
-      weight: 0.05
-      params: { depth: 3, T: 64 }
-    - name: stack
-      type: synth
-      kind: stack_ops
-      weight: 0.03
-      params: { ops: 16 }
-    - name: sort
-      type: synth
-      kind: sort_list
-      weight: 0.02
-      params: { length: 10, vocab: 50 }
+    - { name: dyck, type: synth, kind: dyck, params: { depth: 3, T: 64 } }
+    - { name: stack, type: synth, kind: stack_ops, params: { ops: 16 } }
+    - { name: sort, type: synth, kind: sort_list, params: { length: 10, vocab: 50 } }

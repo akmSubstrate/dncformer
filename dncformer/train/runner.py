@@ -122,27 +122,18 @@ def train_runner(
             "  data:\n"
             "    sticky_mix: 10\n"
             "    tasks:\n"
-            "      - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca, weight: 0.25, max_items: 4000 }\n"
-            "      - { name: tinystories, type: hf, dataset: roneneldan/TinyStories, weight: 0.25, max_items: 4000 }\n"
-            "      - { name: copy, type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }\n"
-            "      - { name: nback, type: synth, weight: 0.30, params: { T: 128, n: 5, vocab: 100 } }"
+            "      - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca,    weight: 0.25, max_items: 4000 }\n"
+            "      - { name: apps,   type:hf,  dataset: codeparrot/apps,     weight:0.15,  max_items: 3000}\n"
+            "      - { name: copy,   type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }\n"
+            "      - { name: stack,  type: synth, kind: stack_ops, weight: 0.05, params: {ops: 50}},"
         )
     mixer = build_sampler_from_cfg(tok, data_cfg)
-    # Scheduler echo for context/debug
-    try:
-        names = getattr(mixer.base, "names", getattr(mixer, "names", None))
-        wts = getattr(mixer.base, "weights", getattr(mixer, "weights", None))
-        stick = getattr(CFG, "data", {}).get("sticky_mix", getattr(CFG, "sticky_mix", 0))
-        if names and wts:
-            print(f"[data] sampler tasks={names} weights={list(map(float, wts))} sticky_mix={int(stick) or 0}")
-    except Exception:
-        pass
 
     # Optional CLI override: make the sampler sticky even if YAML didn't set sticky_mix.
     if isinstance(chunk_len, int) and chunk_len > 1 and not hasattr(mixer, "base"):
         mixer = StickyMixtureSampler(mixer, chunk_steps=int(chunk_len), reset_on_set_weights=False)
 
-    # One-time sampler summary for sanity
+    # Scheduler echo for context/debug
     try:
         base = mixer.base if hasattr(mixer, "base") else mixer
         p = getattr(base, "p", None)
