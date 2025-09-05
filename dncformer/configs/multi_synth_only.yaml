@@ -1,13 +1,13 @@
-# dncformer/configs/multi_hf_synth.yaml
-# Multi‑HF + synthetic curriculum (balanced)
+# dncformer/configs/multi_synth_only.yaml
+# synthetic only curriculum
 seed: 2027
-label: multi_hf_synth
+label: multi_synth_only
 base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
 
 # runtime / training
 precision: bf16
 batch_size: 8
-train_steps: 3000
+train_steps: 100
 warmup_steps: 150
 lr: 2.0e-4
 weight_decay: 0.01
@@ -30,7 +30,7 @@ cross_block_balance_lambda: 0.0   # (sequential multi‑block only)
 
 data:
   # Hold a task for a short chunk; helps convergence & stabilizes batch stats
-  sticky_mix: 200   # steps per task “chunk” (set 0/omit to disable)
+  sticky_mix: 20  # steps per task “chunk” (set 0/omit to disable)
 
   # How many examples to pull from each HF source at build time (not a hard cap per epoch)
   hf_max_items: 8000
@@ -38,48 +38,32 @@ data:
   # Task blend — **weights are normalized** internally.
   # Names appear in logs; type selects loader; params map to generator args.
   tasks:
-    # CODE
-    - name: mbpp
-      type: hf
-      dataset: mbpp
-      weight: 0.20
-      max_items: 8000
+    # MEMORY
+    - name: copy
+      type: synth
+      kind: copy
 
-    - name: apps
-      type: hf
-      dataset: codeparrot/apps
-      weight: 0.15
-      max_items: 8000
+    - name: repeat
+      type: synth
+      kind: repeat
 
-    # MATH
-    - name: gsm8k
-      type: hf
-      dataset: gsm8k
-      weight: 0.15
-      max_items: 8000
-
-    - name: aqua
-      type: hf
-      dataset: aqua_rat
-      weight: 0.20
-      max_items: 8000
+    - name: n-back
+      type: synth
+      kind: n-back
 
     # ALGORITHMIC
     - name: dyck
       type: synth
       kind: dyck
-      weight: 0.20
       params: { depth: 20, T: 128 }
 
     - name: stack
       type: synth
       kind: stack_ops
-      weight: 0.20
       params: { ops: 64, T: 128 }
 
     - name: sort
       type: synth
       kind: sort_list
-      weight: 0.20
       params: { length: 100, vocab: 500, T: 128 }
 

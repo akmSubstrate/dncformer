@@ -20,34 +20,58 @@ def _batchize(tok, prompts: List[str], B: int, max_len: int, pad_id: int) -> tor
 def _rand_tokens(alpha: str, n: int) -> List[str]:
     return [random.choice(alpha) for _ in range(n)]
 
-def make_dyck_gen(tok, max_len: int, pad_id: int, depth: int = 4, T: int = 80) -> Callable[[int], torch.Tensor]:
+def make_dyck_gen(tok, max_len: int, pad_id: int, depth: int = 4, T: int = 80):
     """
-    Generate well‑formed or nearly‑well‑formed parenthesis strings; ask classification/fix.
+    Generate Dyck-like parenthesis strings with maximum nesting bounded by `depth`
+    Occasionally flip a single token to create a near-miss error
     """
+    assert depth >= 1, "depth must be >= 1"
+
     def _make_sample():
-        # build a random dyck string up to 'depth' nesting
         s = []
-        d = 0
-        for _ in range(T//2):
-            if d == 0 or random.random() < 0.6:
+        d = 0  # current stack depth
+        steps = max(1, T // 2)
+
+        for _ in range(steps):
+            if d == 0:
+                # must open to start
                 s.append("("); d += 1
             else:
-                s.append(")"); d = max(0, d-1)
-        s += [")"]*d  # close remains
+                # If we haven't reached the max depth, we can still open.
+                # Bias toward opening a bit, but never exceed `depth`.
+                can_open = (d < depth)
+                open_bias = 0.6
+                if can_open and random.random() < open_bias:
+                    s.append("("); d += 1
+                else:
+                    s.append(")"); d = max(0, d - 1)
+
+        # close any remaining opens
+        s += [")"] * d
         text = "".join(s)
-        # 30% chance inject a single error by flipping one token
+
+        # With 30% chance, inject a single flip error to create a "fix or classify" variant
         if random.random() < 0.3 and len(text) > 2:
-            i = random.randrange(1, len(text)-1)
-            text = text[:i] + (")" if text[i]=="(" else "(") + text[i+1:]
-            q = f"### Sequence:\n{text}\n### Task:\nFix the sequence to be well-formed.\n### Fixed:\n"
+            i = random.randrange(1, len(text) - 1)
+            text = text[:i] + (")" if text[i] == "(" else "(") + text[i + 1:]
+            q = (
+                f"### Sequence:\n{text}\n"
+                f"### Task:\nFix the sequence to be well-formed.\n"
+                f"### Fixed:\n"
+            )
         else:
-            q = f"### Sequence:\n{text}\n### Task:\nIs it well-formed? Answer Yes/No and explain briefly.\n### Answer:\n"
+            q = (
+                f"### Sequence:\n{text}\n"
+                f"### Task:\nIs it well-formed? Answer Yes/No and explain briefly.\n"
+                f"### Answer:\n"
+            )
         return q
 
     prompts = [_make_sample() for _ in range(256)]
 
     def gen(B: int) -> torch.Tensor:
         return _batchize(tok, prompts, B, max_len, pad_id)
+
     return gen
 
 def make_stack_ops_gen(tok, max_len: int, pad_id: int, ops: int = 24) -> Callable[[int], torch.Tensor]:

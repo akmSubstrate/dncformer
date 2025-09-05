@@ -1,24 +1,41 @@
 from __future__ import annotations
-import os
-from typing import Optional, Tuple, Dict
-import json, math, time, contextlib
-
 from dataclasses import dataclass
+from typing import Optional, Tuple, Dict
+
+import os, json, math, time, contextlib
 import torch, torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-
 from ..config import CFG
 from ..log import tb as tblog
 from ..model.head import DNCFormerHead
-from ..utils.env import choose_amp_dtype, report_cuda, sdpa_ctx
+from ..utils.env import choose_amp_dtype
 from ..utils.helpers import reduce_gate_tensor, gate_metrics
-from ..utils.dist import init_distributed, get_world_size, get_local_rank, is_main_process, barrier, cleanup_distributed
-from ..data.mix import StickyMixtureSampler
 from dncformer.data.registry import build_sampler_from_cfg
 
+
+def _ddp_env():
+    """Return (use_ddp, world_size, rank, local_rank)."""
+    ws = int(os.environ.get("WORLD_SIZE", "1"))
+    rk = int(os.environ.get("RANK", "0"))
+    lr = int(os.environ.get("LOCAL_RANK", "0"))
+    return (ws > 1), ws, rk, lr
+
+def _is_main_process() -> bool:
+    if not (dist.is_available() and dist.is_initialized()):
+        return True
+    return dist.get_rank() == 0
+
+def _dist_allreduce_mean(x: float, device: torch.device) -> float:
+    """Average a scalar across ranks; returns x if not initialized."""
+    if not (dist.is_available() and dist.is_initialized()):
+        return x
+    t = torch.tensor([float(x)], device=device, dtype=torch.float32)
+    dist.all_reduce(t, op=dist.ReduceOp.SUM)
+    t /= float(dist.get_world_size())
+    return float(t.item())
 
 def lm_shift_labels(inp_ids: torch.Tensor, logits: torch.Tensor, tok) -> torch.Tensor:
     """
@@ -53,24 +70,23 @@ def _maybe_apply_lora(base: nn.Module):
         print(f"[LoRA] skipped ({type(e).__name__}: {e})")
     return base
 
-def build_model_and_tokenizer(device: str | torch.device | None = None):
+def build_model_and_tokenizer(device: torch.device):
+    """Load tokenizer+base on the given device, then wrap into DNCFormerHead (still nn.Module)."""
     model_id = getattr(CFG, "base_model_id", "TinyLlama/TinyLlama-1.1B-Chat-v1.0")
     tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token or tok.unk_token or "<|pad|>"
         tok.pad_token_id = tok.convert_tokens_to_ids(tok.pad_token)
 
-    # dtype per CFG
-    prec = str(getattr(CFG, "precision", "bf16")).lower()
-    dtype = torch.bfloat16 if (prec == "bf16" and torch.cuda.is_available()) else torch.float32
-
+    torch_dtype = torch.bfloat16 if str(getattr(CFG, "precision", "bf16")).lower() == "bf16" else torch.float32
     base = AutoModelForCausalLM.from_pretrained(
-        model_id, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=None
-    )
+        model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, device_map=None
+    ).to(device)
     base = _maybe_apply_lora(base)  # no-op if disabled
-    dev = device or getattr(CFG, "device", ("cuda" if torch.cuda.is_available() else "cpu"))
-    head = DNCFormerHead(base, CFG).to(dev)
+
+    head = DNCFormerHead(base, CFG).to(device)
     return tok, head
+
 
 def _make_optimizer(model: nn.Module):
     params = [p for p in model.parameters() if p.requires_grad]
@@ -134,276 +150,89 @@ def train_runner(
     *,
     steps: int,
     batch_size: int,
-    mixture: Tuple[float, float, float, float],
+    mixture: Tuple[float, float, float, float],   # for CLI compatibility, ignored when CFG.data present
     warmup_steps: int = 100,
     min_lr_ratio: float = 0.1,
-    hf_dataset: Optional[str] = "tatsu-lab/alpaca",
-    hf_max_items: int = 5000,
-    chunk_len: int = 0,
+    hf_dataset: Optional[str] = "tatsu-lab/alpaca",   # unused when CFG.data present
+    hf_max_items: int = 5000,                         # unused when CFG.data present
+    chunk_len: int = 0,                               # prefer CFG.data.sticky_mix; left for CLI compat
     log_every: int = 10,
     label: Optional[str] = None
 ):
-    # setup - init DDP if torchrun provided; else choose local device
-    local_rank, world_size = init_distributed(backend=str(getattr(CFG, "ddp_backend", "nccl")))
+    # DDP bootstrap
+    use_ddp, world_size, rank, local_rank = _ddp_env()
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
 
-    # Seed: offset by global rank so each rank sees different batches
-    seed = int(getattr(CFG, "seed", 1337))
-    torch.manual_seed(seed + (0 if world_size == 1 else local_rank))
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed + (0 if world_size == 1 else local_rank))
+    if use_ddp:
+        # NCCL for CUDA, reasonable timeout for long runs
+        from datetime import timedelta
+        dist.init_process_group(backend="nccl", timeout=timedelta(minutes=60))
 
-    tok, head = build_model_and_tokenizer()
-    head = head.to(device)
+    # Model & optimizer
+    tok, head = build_model_and_tokenizer(device)
+    if use_ddp:
+        # Wrap model head (contains base model)
+        head = DDP(head, device_ids=[local_rank] if device.type == "cuda" else None,
+                   output_device=local_rank if device.type == "cuda" else None,
+                   find_unused_parameters=False)
 
-    # Wrap with DDP if multi-GPU
-    if world_size > 1:
-        head = _ddp.DistributedDataParallel(
-            head,
-            device_ids=[local_rank] if device.type == "cuda" else None,
-            output_device=local_rank if device.type == "cuda" else None,
-            broadcast_buffers=bool(getattr(CFG, "ddp_broadcast_buffers", False)),
-            find_unused_parameters=bool(getattr(CFG, "ddp_find_unused_parameters", True)),
-        )
-
-    opt = _make_optimizer(head)
+    opt = _make_optimizer(head.module if isinstance(head, DDP) else head)
     sch = WarmupCosine(opt, warmup_steps=warmup_steps, total_steps=steps, min_lr_ratio=min_lr_ratio)
 
-    # Data sampler / YAML loading logic
-    try:
-        data_cfg = getattr(CFG, "data", None)
-    except Exception:
-        data_cfg = None
-
+    # Data
+    # 0.3.x runner requires a YAML `data:` spec
+    data_cfg = getattr(CFG, "data", None)
     if not (isinstance(data_cfg, dict) and data_cfg.get("tasks")):
-        raise ValueError(
-            "CFG.data.tasks is missing or empty. 0.3.x runner requires a YAML config with a 'data:' section.\n"
-            "Example:\n"
-            "  data:\n"
-            "    sticky_mix: 10\n"
-            "    tasks:\n"
-            "      - { name: alpaca, type: hf, dataset: tatsu-lab/alpaca,    weight: 0.25, max_items: 4000 }\n"
-            "      - { name: apps,   type:hf,  dataset: codeparrot/apps,     weight:0.15,  max_items: 3000}\n"
-            "      - { name: copy,   type: synth, weight: 0.20, params: { T: 128, vocab: 200 } }\n"
-            "      - { name: stack,  type: synth, kind: stack_ops, weight: 0.05, params: {ops: 50}},"
-        )
+        if use_ddp:
+            dist.barrier()
+            if dist.get_rank() == 0:
+                raise ValueError("CFG.data.tasks is missing or empty. 0.3.x runner requires a 'data:' section.")
+            # ensure non-rank0 also exits
+            raise SystemExit(1)
+        raise ValueError("CFG.data.tasks is missing or empty. 0.3.x runner requires a 'data:' section.")
+
+    # Build data mixture, handled by registry.py
     mixer = build_sampler_from_cfg(tok, data_cfg)
 
-    # Optional CLI override: make the sampler sticky even if YAML didn't set sticky_mix.
-    if isinstance(chunk_len, int) and chunk_len > 1 and not hasattr(mixer, "base"):
-        mixer = StickyMixtureSampler(mixer, chunk_steps=int(chunk_len), reset_on_set_weights=False)
-
-    # Scheduler echo for context/debug
-    try:
-        base = mixer.base if hasattr(mixer, "base") else mixer
-        p = getattr(base, "p", None)
-        probs = (p.detach().cpu().tolist() if hasattr(p, "detach") else None)
-        print(f"[data] using tasks={getattr(base, 'names', None)} | weights={getattr(base, 'weights', None)} | "
-              f"sticky={getattr(mixer, 'chunk_steps', 1) if hasattr(mixer, 'chunk_steps') else 1} | p={probs}")
-    except Exception:
-        pass
-
-    amp_dtype = choose_amp_dtype(getattr(CFG, "precision", "bf16"))
-    device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
-    use_autocast = (device_type == 'cuda' and amp_dtype != torch.float32)
-    use_scaler = (device_type == 'cuda' and amp_dtype == torch.float16)
-    scaler = torch.amp.GradScaler('cuda', enabled=use_scaler)
-
-    # TB run
-    run_name = label or time.strftime("dncformer-%Y%m%d-%H%M%S")
-    tblog.start_tb_run(run_name)
-    if tblog.tb and tblog.tb.writer:
-        tblog.tb.add_text("run/config", json.dumps({
-            "steps": steps, "batch_size": batch_size, "warmup_steps": warmup_steps,
-            "mixture": list(mixture), "chunk_len": int(chunk_len),
-            "hf_dataset": hf_dataset, "hf_max_items": hf_max_items,
-        }, indent=2), 0)
-
-    head.train()
-    for step in range(1, steps+1):
-        ids = mixer(batch_size).to(next(head.parameters()).device)
-        with torch.amp.autocast(
-                device_type=device_type,
-                dtype=amp_dtype if device_type == 'cuda' else torch.float32,
-                enabled=use_autocast
-        ):
-            logits, gates, aux = head.forward(
-                ids,
-                gate_override=getattr(CFG, "force_g", None),
-            )
-            # standard LM loss
-            loss = lm_shift_labels(ids, logits, tok)
-
-            # A1: soft expert balance (parallel only)
-            lam = float(getattr(CFG, "router_balance_lambda", 0.0))
-            if lam > 0.0 and isinstance(aux, dict) and "per_block" in aux:
-                ents = [m.get("experts_pi_entropy") for m in aux["per_block"] if isinstance(m, dict)]
-                ents = [float(x) for x in ents if isinstance(x, (float,int))]
-                if ents: loss = loss - lam * (sum(ents)/len(ents))
-
-            # write-sparsity reg (optional)
-            lam_w = float(getattr(CFG, "write_reg_lambda", 0.0))
-            if lam_w > 0.0 and isinstance(aux, dict) and "blocks" in aux:
-                bn = getattr(mixer, "last_name", "")
-                apply_reg = (bn in ("copy","repeat","nback")) if bool(getattr(CFG, "reg_only_on_memory_batches", True)) else True
-                if apply_reg:
-                    wm = [m.get("write_gate_mean") for m in aux["blocks"] if isinstance(m, dict)]
-                    wm = [float(x) for x in wm if isinstance(x, (float,int))]
-                    if wm: loss = loss + lam_w * (sum(wm)/len(wm))
-
-        if use_scaler:
-            scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
-            scaler.step(opt); scaler.update(); opt.zero_grad(set_to_none=True)
-        else:
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
-            opt.step(); opt.zero_grad(set_to_none=True)
-
-        sch.step()
-
-        if step % log_every == 0 and tblog.tb and tblog.tb.writer:
-            print("[tb] logging at step", step, "task=", getattr(mixer, 'last_name', '?'))
-            w = tblog.tb.writer  # local alias
-            # General loss/lr
-            w.add_scalar("train/loss", float(loss.item()), step)
-            w.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
-
-            # Gate metrics
-            if isinstance(gates, (list, tuple)):
-                for bi, g in enumerate(gates):
-                    m, f, e = gate_metrics(g)
-                    w.add_scalar(f"gates/block_{bi}_mean", m, step)
-                    w.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
-                    w.add_scalar(f"gates/block_{bi}_entropy", e, step)
-
-            # Per-task breakdown
-            mix_name = getattr(mixer, "last_name", None) or "unknown"
-            tblog.tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
-            if isinstance(gates, (list, tuple)):
-                for bi, g in enumerate(gates):
-                    m, f, _ = gate_metrics(g)  # <-- fixed
-                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
-                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
-
-                # Expert diagnostics (if present)
-                for bi, bd in enumerate(aux.get("blocks", [])):
-                    if isinstance(bd, dict) and "experts_pi_mean" in bd:
-                        for j, v in enumerate(bd["experts_pi_mean"]):
-                            w.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
-                    if isinstance(bd, dict) and "experts_pi_entropy" in bd:
-                        w.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
-                    if isinstance(bd, dict) and "write_gate_mean" in bd:
-                        w.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
-
-            w.flush()
-
-        if step % log_every == 0:
-            gmeans = [float(reduce_gate_tensor(g).mean().item()) for g in gates] if isinstance(gates, (list, tuple)) else []
-            print(f"step {step} | loss {loss.item():.4f} | lr {sch.get_last_lr()[0]:.2e} | gates={gmeans} | mix={getattr(mixer,'last_name','?')}")
-
-    if tblog and tblog.tb.writer: tblog.tb.flush()
-    return head, tok
-
-# NEW
-def train_runner(
-    *,
-    steps: int,
-    batch_size: int,
-    mixture: Tuple[float, float, float, float],
-    warmup_steps: int = 100,
-    min_lr_ratio: float = 0.1,
-    hf_dataset: Optional[str] = "tatsu-lab/alpaca",
-    hf_max_items: int = 5000,
-    chunk_len: int = 0,
-    log_every: int = 10,
-    label: Optional[str] = None
-):
-    # --- DDP context (no-op on single GPU) ---
-    is_dist, local_rank, world_size, _ = _infer_distributed_context()
-    if is_dist:
-        _maybe_init_distributed(local_rank)
-        is_main = (dist.get_rank() == 0)
-        device = torch.device(f"cuda:{local_rank}")
-    else:
-        is_main = True
-        device = torch.device(getattr(CFG, "device", "cuda" if torch.cuda.is_available() else "cpu"))
-
-    # per-rank seeding (keep CLI/CFG seed meaning stable)
-    try:
-        seed = int(getattr(CFG, "seed", 1337))
-    except Exception:
-        seed = 1337
-    torch.manual_seed(seed + (dist.get_rank() if is_dist else 0))
-    import random as _rnd
-    _rnd.seed(seed + (dist.get_rank() if is_dist else 0))
-
-    # --- Setup ---
-    tok, head = build_model_and_tokenizer(device=device)
-    if is_dist:
-        # DDP wrap on the rank-local device
-        head = DDP(head, device_ids=[device.index], output_device=device.index,
-                   broadcast_buffers=False, find_unused_parameters=False)
-
-    opt = _make_optimizer(head)
-    sch = WarmupCosine(opt, warmup_steps=warmup_steps, total_steps=steps, min_lr_ratio=min_lr_ratio)
-
-    # data config or legacy fallback
-    try:
-        data_cfg = getattr(CFG, "data", None)
-    except Exception:
-        data_cfg = None
-
-    if isinstance(data_cfg, dict) and data_cfg.get("tasks"):
-        mixer = build_mixed_sampler(tok, data_cfg)
-    else:
-        # legacy 4-slot fallback
-        from ..data.mix import build_mixer
-        mixer = build_mixer(tok, mixture, hf_dataset=hf_dataset, hf_max_items=hf_max_items)
-
-    # batch per rank
-    per_rank_batch = max(1, int(batch_size // (world_size if is_dist else 1)))
-
-    # AMP/sdpa setup
+    # AMP / Scaler
     amp_dtype = choose_amp_dtype(getattr(CFG, "precision", "bf16"))
     device_type = 'cuda' if device.type == 'cuda' else 'cpu'
     use_autocast = (device_type == 'cuda' and amp_dtype != torch.float32)
     use_scaler = (device_type == 'cuda' and amp_dtype == torch.float16)
     scaler = torch.amp.GradScaler('cuda', enabled=use_scaler)
 
-    # TB only on rank-0
-    if is_main and TB_AVAILABLE:
-        run_name = label or time.strftime("dncformer-%Y%m%d-%H%M%S")
-        start_tb_run(run_name)
-        if tb and tb.writer:
-            tb.add_text("run/config", json.dumps({
-                "steps": steps, "batch_size": batch_size, "per_rank_batch": per_rank_batch,
-                "world_size": world_size, "warmup_steps": warmup_steps,
-                "hf_dataset": hf_dataset, "hf_max_items": hf_max_items,
-                "chunk_len": int(chunk_len),
+    # TB logging (rank-0 only)
+    run_name = label or time.strftime("dncformer-%Y%m%d-%H%M%S")
+    if _is_main_process():
+        tblog.start_tb_run(run_name)
+        if tblog.tb and tblog.tb.writer:
+            tblog.tb.add_text("run/config", json.dumps({
+                "steps": steps, "batch_size": batch_size, "warmup_steps": warmup_steps,
+                "data_tasks": [t.get("name","?") for t in data_cfg.get("tasks", [])],
+                "sticky_mix": int(data_cfg.get("sticky_mix", 0) or 0),
             }, indent=2), 0)
 
-    # --- Train loop ---
-    head.train()
+    # Training loop
+    module = head.module if isinstance(head, DDP) else head
+    module.train()
+
     for step in range(1, steps + 1):
-        ids = mixer(per_rank_batch).to(device)
+        ids = mixer(batch_size).to(device, non_blocking=True)
 
         with torch.amp.autocast(
             device_type=device_type,
             dtype=amp_dtype if device_type == 'cuda' else torch.float32,
             enabled=use_autocast
         ):
-            logits, gates, aux = head.forward(
+            logits, gates, aux = module.forward(
                 ids,
                 gate_override=getattr(CFG, "force_g", None),
             )
             loss = lm_shift_labels(ids, logits, tok)
 
-            # Optional: scale loss so DDP gradient magnitude matches single-GPU
-            if is_dist:
-                loss = loss / float(world_size)
-
-            # A1: soft expert balance (parallel only)
+            # Soft expert balance - parallel experts configuration only (optional)
             lam = float(getattr(CFG, "router_balance_lambda", 0.0))
             if lam > 0.0 and isinstance(aux, dict) and "per_block" in aux:
                 ents = [m.get("experts_pi_entropy") for m in aux["per_block"] if isinstance(m, dict)]
@@ -424,54 +253,75 @@ def train_runner(
 
         if use_scaler:
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
+            torch.nn.utils.clip_grad_norm_(module.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
             scaler.step(opt); scaler.update(); opt.zero_grad(set_to_none=True)
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(head.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
+            torch.nn.utils.clip_grad_norm_(module.parameters(), float(getattr(CFG, "grad_clip", 1.0)))
             opt.step(); opt.zero_grad(set_to_none=True)
 
         sch.step()
 
-        # rank-0 logging only
-        if is_main and (step % log_every == 0) and tb and tb.writer:
-            tb.writer.add_scalar("train/loss", float(loss.item()), step)
-            tb.writer.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
+        # Reductions for logging
+        # Loss avg across ranks for display/TB
+        loss_avg = _dist_allreduce_mean(float(loss.item()), device)
 
+        # Gate means for quick console summary
+        gmeans_local = [float(reduce_gate_tensor(g).mean().item()) for g in gates] if isinstance(gates, (list, tuple)) else []
+        gmeans_avg = []
+        for gm in gmeans_local:
+            gmeans_avg.append(_dist_allreduce_mean(gm, device))
+
+        # Rank‑0 logging
+        if (step % log_every == 0) and _is_main_process() and tblog.tb and tblog.tb.writer:
+            tblog.tb.writer.add_scalar("train/loss", loss_avg, step)
+            tblog.tb.writer.add_scalar("train/lr", float(sch.get_last_lr()[0]), step)
+
+            # Gate metrics by block
             if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
-                    m, f, e = gate_metrics(g)
-                    tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
-                    tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
-                    tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
+                    m, f, e = gate_metrics(g)               # <-- fixed (no enumerate(...))
+                    # average each across ranks
+                    m = _dist_allreduce_mean(float(m), device)
+                    f = _dist_allreduce_mean(float(f), device)
+                    e = _dist_allreduce_mean(float(e), device)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_mean", m, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_frac>0.5", f, step)
+                    tblog.tb.writer.add_scalar(f"gates/block_{bi}_entropy", e, step)
 
             mix_name = getattr(mixer, "last_name", None) or "unknown"
-            tb.writer.add_scalar(f"loss_by_task/{mix_name}", float(loss.item()), step)
+            tblog.tb.writer.add_scalar(f"loss_by_task/{mix_name}", loss_avg, step)
+
             if isinstance(gates, (list, tuple)):
                 for bi, g in enumerate(gates):
-                    m, f, _ = gate_metrics(g)
-                    tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
-                    tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
+                    m, f, _ = gate_metrics(g)               # <-- fixed (no enumerate(...))
+                    m = _dist_allreduce_mean(float(m), device)
+                    f = _dist_allreduce_mean(float(f), device)
+                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_mean/{mix_name}", m, step)
+                    tblog.tb.writer.add_scalar(f"gates_by_task/block_{bi}_frac>0.5/{mix_name}", f, step)
 
+                # expert diagnostics - if parallel present
                 for bi, bd in enumerate(aux.get("blocks", [])):
                     if isinstance(bd, dict) and "experts_pi_mean" in bd:
                         for j, v in enumerate(bd["experts_pi_mean"]):
-                            tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
+                            tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_mean_{j}", float(v), step)
                     if isinstance(bd, dict) and "experts_pi_entropy" in bd:
-                        tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
+                        tblog.tb.writer.add_scalar(f"experts/block_{bi}/pi_entropy", float(bd["experts_pi_entropy"]), step)
                     if isinstance(bd, dict) and "write_gate_mean" in bd:
-                        tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
-            tb.flush()
+                        tblog.tb.writer.add_scalar(f"reg/block_{bi}/write_gate_mean", float(bd["write_gate_mean"]), step)
 
-        if is_main and (step % log_every == 0):
-            gmeans = [float(reduce_gate_tensor(g).mean().item()) for g in gates] if isinstance(gates, (list, tuple)) else []
-            print(f"step {step} | loss {loss.item():.4f} | lr {sch.get_last_lr()[0]:.2e} | gates={gmeans} | mix={getattr(mixer,'last_name','?')}")
+            tblog.tb.flush()
 
-    # finalize
-    if is_main and tb and tb.writer:
-        tb.flush()
-    if is_dist and dist.is_initialized():
+        # Console on rank‑0
+        if (step % log_every == 0) and _is_main_process():
+            print(f"step {step} | loss {loss_avg:.4f} | lr {sch.get_last_lr()[0]:.2e} | gates={gmeans_avg} | mix={getattr(mixer,'last_name','?')}")
+
+    if _is_main_process() and tblog.tb and tblog.tb.writer:
+        tblog.tb.flush()
+
+    if use_ddp:
         dist.barrier()
         dist.destroy_process_group()
 
+    # Return DDP-wrapped module and tokenizer.
     return head, tok

@@ -1,0 +1,33 @@
+# dncformer/configs/multi_hf_synth_smoke.yaml
+seed: 1337
+label: multi_hf_synth_smoke
+base_model_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+
+precision: bf16
+batch_size: 4
+train_steps: 200
+warmup_steps: 20
+lr: 2.0e-4
+weight_decay: 0.01
+grad_clip: 1.0
+
+lora_enable: true
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.05
+
+router_balance_lambda: 1.0e-3
+router_noise_std: 0.02
+expert_dropout_p: 0.02
+block_memdrop_prob: 0.00
+cross_block_balance_lambda: 0.0
+
+data:
+  sticky_mix: 20
+  hf_max_items: 2000
+  tasks:
+    - { name: mbpp,   type: hf,   dataset: mbpp,            weight: 0.25, max_items: 2000 }
+    - { name: apps,   type: hf,   dataset: codeparrot/apps, weight: 0.25, max_items: 2000 }
+    - { name: gsm8k,  type: hf,   dataset: gsm8k,           weight: 0.25, max_items: 2000 }
+    - { name: dyck,   type: synth, kind: dyck,              weight: 0.10, params: { depth: 2, T: 96 } }
+    - { name: sort,   type: synth, kind: sort_list,         weight: 0.15, params: { length: 10, vocab: 50, T: 96 } }

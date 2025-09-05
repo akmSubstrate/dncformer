@@ -33,6 +33,7 @@ Thumbs.db
 
 # Checkpoints / artifacts
 runs/*
+runs_deprc
 checkpoints/
 output/
 artifacts/
